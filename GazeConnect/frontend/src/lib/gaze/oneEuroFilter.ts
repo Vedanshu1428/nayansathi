@@ -1,8 +1,9 @@
 /**
- * GazeConnect 1€ (One-Euro) Adaptive Low-Pass Filter
- * Eliminates micro-tremors and eye jitter during fixation while maintaining
- * zero-lag responsiveness during rapid saccades.
- * Includes intelligent saccade detection: instantaneous jump adaptation without dragging delay.
+ * GazeConnect Two-Stage Adaptive Stabilizer
+ * Combines:
+ * Stage 1: Exponential Moving Average (alpha = 0.15) for high-frequency sensor noise dampening.
+ * Stage 2: 1€ (One-Euro) Adaptive Low-Pass Filter (minCutoff = 0.15, beta = 0.002) for smooth glide.
+ * Includes deadzone suppression (22px) and velocity clamping (750-900 px/s).
  */
 
 import { CursorSpeedPreset } from "./types";
@@ -43,12 +44,18 @@ class LowPassFilter {
 }
 
 export interface OneEuroConfig {
-  minCutoff: number; // Hz (typical: 1.0 - 1.5)
-  beta: number;      // Speed coefficient (typical: 0.01 - 0.1)
-  dCutoff: number;   // Derivative cutoff Hz (typical: 1.0)
+  minCutoff: number; // Hz (Stage 2 cutoff)
+  beta: number;      // Speed coefficient
+  dCutoff: number;   // Derivative cutoff Hz
 }
 
 export class OneEuroFilter2D {
+  // ── Stage 1: Exponential Moving Average (EMA) Stabilizer ──
+  private emaX: number | null = null;
+  private emaY: number | null = null;
+  private readonly emaAlpha: number = 0.15; // 0.15 smoothing on normalized inputs
+
+  // ── Stage 2: 1-Euro Adaptive Low-Pass Filter ──
   private xFilter: LowPassFilter;
   private yFilter: LowPassFilter;
   private dxFilter: LowPassFilter;
@@ -62,7 +69,7 @@ export class OneEuroFilter2D {
   private lastAcceptedY: number = 0;
 
   // Speed & deadzone controls (overridable via applyPreset)
-  private maxSpeedPxPerSec: number = 900;
+  private maxSpeedPxPerSec: number = 750;
   private deadzoneRadius: number = 22;
 
   // Last output position for deadzone & velocity clamping
@@ -71,8 +78,8 @@ export class OneEuroFilter2D {
 
   constructor(config: Partial<OneEuroConfig> = {}) {
     this.config = {
-      minCutoff: config.minCutoff ?? 0.22,
-      beta: config.beta ?? 0.004,
+      minCutoff: config.minCutoff ?? 0.15,
+      beta: config.beta ?? 0.002,
       dCutoff: config.dCutoff ?? 1.0,
     };
 
@@ -104,9 +111,7 @@ export class OneEuroFilter2D {
   }
 
   /**
-   * Filters raw (x, y) coordinates at timestamp (ms).
-   * Intelligently detects eye saccades: during fast jumps across screen,
-   * snaps immediately without lagging delay.
+   * Filters raw (x, y) coordinates at timestamp (ms) using two-stage stabilization.
    */
   public filter(
     x: number,
@@ -114,15 +119,27 @@ export class OneEuroFilter2D {
     timestamp: number,
     viewportWidth: number = 1920
   ): { x: number; y: number } {
+    // ── Stage 1: Exponential Moving Average Pre-Damping (alpha = 0.15) ──
+    if (this.emaX === null || this.emaY === null) {
+      this.emaX = x;
+      this.emaY = y;
+    } else {
+      this.emaX = this.emaAlpha * x + (1.0 - this.emaAlpha) * this.emaX;
+      this.emaY = this.emaAlpha * y + (1.0 - this.emaAlpha) * this.emaY;
+    }
+    const stage1X = this.emaX;
+    const stage1Y = this.emaY;
+
+    // First frame initialization
     if (this.lastTime === null) {
       this.lastTime = timestamp;
-      this.lastAcceptedX = x;
-      this.lastAcceptedY = y;
-      this.lastOutputX = x;
-      this.lastOutputY = y;
-      this.xFilter.filter(x, 1.0);
-      this.yFilter.filter(y, 1.0);
-      return { x, y };
+      this.lastAcceptedX = stage1X;
+      this.lastAcceptedY = stage1Y;
+      this.lastOutputX = stage1X;
+      this.lastOutputY = stage1Y;
+      this.xFilter.filter(stage1X, 1.0);
+      this.yFilter.filter(stage1Y, 1.0);
+      return { x: stage1X, y: stage1Y };
     }
 
     const dt = Math.max(1e-3, (timestamp - this.lastTime) / 1000.0);
@@ -130,19 +147,19 @@ export class OneEuroFilter2D {
     const rate = 1.0 / dt;
 
     // Deadzone check: if gaze hasn't moved far enough from last output, return frozen position
-    const distFromOutput = Math.hypot(x - this.lastOutputX, y - this.lastOutputY);
+    const distFromOutput = Math.hypot(stage1X - this.lastOutputX, stage1Y - this.lastOutputY);
     if (distFromOutput < this.deadzoneRadius && this.lastTime !== null) {
       return { x: this.lastOutputX, y: this.lastOutputY };
     }
 
-    // Detect rapid eye saccade (> 20% viewport distance)
+    // Detect rapid intentional saccade (> 20% viewport distance)
     const saccadeThreshold = viewportWidth * 0.20;
-    const distFromLast = Math.hypot(x - this.lastAcceptedX, y - this.lastAcceptedY);
+    const distFromLast = Math.hypot(stage1X - this.lastAcceptedX, stage1Y - this.lastAcceptedY);
 
     if (distFromLast > saccadeThreshold) {
       // Rapid saccade: snap to new position with minimal lag (alpha = 0.85)
-      const snapX = this.xFilter.filter(x, 0.85);
-      const snapY = this.yFilter.filter(y, 0.85);
+      const snapX = this.xFilter.filter(stage1X, 0.85);
+      const snapY = this.yFilter.filter(stage1Y, 0.85);
       this.lastAcceptedX = snapX;
       this.lastAcceptedY = snapY;
       this.lastOutputX = snapX;
@@ -150,12 +167,12 @@ export class OneEuroFilter2D {
       return { x: snapX, y: snapY };
     }
 
-    // 1. Filter derivatives (velocity)
-    const prevX = this.xFilter.hasLast() ? this.xFilter.last() : x;
-    const prevY = this.yFilter.hasLast() ? this.yFilter.last() : y;
+    // ── Stage 2: 1-Euro Filter on EMA-Stabilized Point ──
+    const prevX = this.xFilter.hasLast() ? this.xFilter.last() : stage1X;
+    const prevY = this.yFilter.hasLast() ? this.yFilter.last() : stage1Y;
 
-    const dx = (x - prevX) * rate;
-    const dy = (y - prevY) * rate;
+    const dx = (stage1X - prevX) * rate;
+    const dy = (stage1Y - prevY) * rate;
 
     const alphaD = this.computeAlpha(rate, this.config.dCutoff);
     const edx = this.dxFilter.filter(dx, alphaD);
@@ -163,13 +180,13 @@ export class OneEuroFilter2D {
 
     const speed = Math.hypot(edx, edy);
 
-    // 2. Compute adaptive position cutoff based on movement speed
+    // Compute adaptive position cutoff based on movement speed
     const cutoff = this.config.minCutoff + this.config.beta * speed;
     const alpha = this.computeAlpha(rate, cutoff);
 
-    // 3. Filter position
-    const filteredX = this.xFilter.filter(x, alpha);
-    const filteredY = this.yFilter.filter(y, alpha);
+    // Filter position
+    const filteredX = this.xFilter.filter(stage1X, alpha);
+    const filteredY = this.yFilter.filter(stage1Y, alpha);
 
     this.lastAcceptedX = filteredX;
     this.lastAcceptedY = filteredY;
@@ -198,6 +215,8 @@ export class OneEuroFilter2D {
 
   public reset(): void {
     this.lastTime = null;
+    this.emaX = null;
+    this.emaY = null;
     this.lastOutputX = 0;
     this.lastOutputY = 0;
     this.xFilter.reset();

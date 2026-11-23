@@ -31,9 +31,9 @@ Track progress across all 10 sequential build phases (0 to 9). Mark tasks `[x]` 
 
 ## [x] Phase 2: Computer Vision Pipeline & Real-Time Feature Extractor
 - [x] Implement `frontend/src/lib/gaze/types.ts` with strict TypeScript types for all eye features, statuses, points, and calibration data.
-- [x] Implement `frontend/src/lib/gaze/featureExtractor.ts` using `@mediapipe/tasks-vision` FaceLandmarker (numFaces: 1, runningMode: 'VIDEO', landmark indices 33, 133, 159, 145, 362, 263, 386, 374, iris 468-477, EAR computation, blink rejection).
+- [x] Implement `frontend/src/lib/gaze/featureExtractor.ts` using `@mediapipe/tasks-vision` FaceLandmarker (numFaces: 1, runningMode: 'VIDEO', landmark indices 33, 133, 159, 145, 362, 263, 386, 374, iris 468-477, EAR computation, blink rejection, 3-frame rolling median filter).
 - [x] Implement `frontend/src/components/gaze/WebcamTracker.tsx` (local getUserMedia, permission handling, canvas landmarks overlay, tracking status callbacks).
-- [x] Wire `WebcamTracker.tsx` into `communicate/page.tsx`.
+- [x] Wire `WebcamTracker.tsx` into `communicate/page.tsx` and persistent `GazeProvider.tsx`.
 - [x] Verification Gate: Run `npm run build` in `frontend/` without errors.
 
 ---
@@ -47,10 +47,10 @@ Track progress across all 10 sequential build phases (0 to 9). Mark tasks `[x]` 
 ---
 
 ## [x] Phase 4: 1-Euro Filter & Gaze Dwell Engine
-- [x] Implement `frontend/src/lib/gaze/oneEuroFilter.ts` (1€ filter with minCutoff, beta, dCutoff, outlier jump gate).
-- [x] Implement `frontend/src/lib/gaze/dwellEngine.ts` (hit testing with 12px accessibility padding, 150ms micro-jitter exit grace buffer, 100% dwell trigger, 600ms post-selection cooldown, gaze-exit re-arm requirement).
-- [x] Implement `frontend/src/components/gaze/GazeCursor.tsx` (floating SVG radial progress ring, dwell duration tuner 600ms-2500ms, smoothing tuner).
-- [x] Wire `GazeCursor.tsx` and `dwellEngine.ts` into `communicate/page.tsx`.
+- [x] Implement `frontend/src/lib/gaze/oneEuroFilter.ts` (1€ filter with minCutoff 0.22, beta 0.004, dCutoff 1.0, 22px deadzone, velocity clamping 900px/s, saccade detection).
+- [x] Implement `frontend/src/lib/gaze/dwellEngine.ts` (hit testing with 24px magnetic snapping, 150ms micro-jitter exit grace buffer, intentional hold-blink click at >=450ms, cursor freeze on blink, 100% dwell trigger, 600ms/900ms post-selection cooldown).
+- [x] Implement `frontend/src/components/gaze/GazeCursor.tsx` (floating SVG radial progress ring, amber blink-hold ring, tuning pill for Hold-Blink / Slow Dwell / Hybrid, cursor speed presets, timing sliders).
+- [x] Wire `GazeCursor.tsx` and `dwellEngine.ts` into global `GazeProvider.tsx` and `communicate/page.tsx`.
 - [x] Verification Gate: Run `npm run build` in `frontend/` without errors.
 
 ---
@@ -59,7 +59,7 @@ Track progress across all 10 sequential build phases (0 to 9). Mark tasks `[x]` 
 - [x] Implement `frontend/src/lib/prediction/localPredictor.ts` (100% offline bigram/trigram predictor + frequency tables for EN, HI, ES, ZH).
 - [x] Implement `frontend/src/components/keyboard/VirtualKeyboard.tsx`:
   - 5-slot offline word prediction bar.
-  - Layout switchers: QWERTY, Simplified, Large-Key, High-Contrast.
+  - Layout switchers: QWERTY, Simplified, Large-Key (`min-h-[84px]`), High-Contrast.
   - Script switchers: English (EN), Hindi (HI), Spanish (ES), Chinese (ZH).
   - High-target keys (68px–84px min height), Space, Backspace, Delete Word, Undo, Clear.
   - Full `data-dwell="true"` and manual mouse/keyboard support.
@@ -108,6 +108,6 @@ Track progress across all 10 sequential build phases (0 to 9). Mark tasks `[x]` 
 - [x] Implement `backend/tests/test_api.py` (pytest suite covering health, sentence prediction, offline fallback, and auth validation).
 - [x] Implement `docs/testing_and_deployment.md` (comprehensive testing guidelines, deployment steps, environment configs, and troubleshooting).
 - [x] Execute `npm run lint` in `frontend/` → **PASSED** (zero warnings, zero errors).
-- [x] Execute `npm run build` in `frontend/` → **PASSED** (all 5 routes prerendered successfully).
+- [x] Execute `npm run build` in `frontend/` → **PASSED** (all 6 routes prerendered successfully).
 - [x] Execute `python -m pytest tests/test_api.py -v` in `backend/` → **8/8 PASSED in 0.50s**.
 - [x] Final Project Completion Report written.

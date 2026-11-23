@@ -23,6 +23,21 @@ let landmarkerLoadPromise: Promise<FaceLandmarkerType> | null = null;
 /** Module-level tracker: timestamp (ms) when eyes first entered the closed state. */
 let eyeClosedStartTime: number | null = null;
 
+/** Module-level setting: horizontal mirror toggle (default true for front webcams). */
+let mirrorXSetting: boolean = true;
+
+export function setMirrorX(enabled: boolean): void {
+  mirrorXSetting = enabled;
+}
+
+export function getMirrorX(): boolean {
+  return mirrorXSetting;
+}
+
+/** Open-eye EAR baseline tracker and freeze cache for early blink onset */
+let openEyeBaselineEAR = 0.28;
+let lastValidFeatures: EyeFeatures | null = null;
+
 // 3-frame rolling history for single-frame spike elimination
 let historyLX: number[] = [];
 let historyLY: number[] = [];
@@ -142,40 +157,25 @@ export function computeEAR(
 }
 
 /**
- * Computes 2nd-degree polynomial feature expansion:
- * input: 6 base zero-centered features [lx, ly, rx, ry, hx, hy]
- * output: [1, x1, x2, ..., x6, x1^2, x1*x2, ..., x6^2] (28 features total)
- */
-export function expandPolynomialFeatures(base: number[]): number[] {
-  const result: number[] = [1]; // Bias term
-
-  // 1st degree
-  for (let i = 0; i < base.length; i++) {
-    result.push(base[i]);
-  }
-
-  // 2nd degree + interaction terms
-  for (let i = 0; i < base.length; i++) {
-    for (let j = i; j < base.length; j++) {
-      result.push(base[i] * base[j]);
-    }
-  }
-
-  return result;
-}
-
-/**
  * Extracts normalized, jitter-resistant eye features from raw facial landmarks.
- * Uses eye-in-socket relative geometry normalized by inter-canthal distance
- * to isolate pure eye movement from eyelid flutter and head translation.
+ * - Horizontal iris ratio: when looking physically LEFT, avgIrisX decreases toward 0.0;
+ *   when looking physically RIGHT, avgIrisX increases toward 1.0 (with mirrorX: true).
+ * - Vertical iris position: calculated strictly relative to rigid eye corner baseline
+ *   ((innerCorner.y + outerCorner.y) / 2) to eliminate eyelid droop / flutter drift.
+ * - Early blink freeze: freezes coordinates if avgEAR drops within 20% of open-eye baseline.
+ * - Feature vector: pure linear 5-feature vector [1, avgIrisX, avgIrisY, headCenterX, headCenterY].
  */
 export function extractEyeFeatures(
   landmarks: NormalizedLandmark[] | null | undefined,
-  timestamp: number
+  timestamp: number,
+  mirrorXOverride?: boolean
 ): EyeFeatures {
+  const mirrorX = mirrorXOverride ?? mirrorXSetting;
+
   if (!landmarks || landmarks.length < 478) {
-    // No face detected — reset closed-eye tracking and rolling history
+    // No face detected — reset closed-eye tracking, freeze buffer, and rolling history
     eyeClosedStartTime = null;
+    lastValidFeatures = null;
     historyLX = [];
     historyLY = [];
     historyRX = [];
@@ -202,7 +202,7 @@ export function extractEyeFeatures(
       isEyesClosed: false,
       closedDurationMs: 0,
       headPose: emptyHead,
-      featureVector: expandPolynomialFeatures([0, 0, 0, 0, 0, 0]),
+      featureVector: [1, 0.5, 0.5, 0.5, 0.5],
     };
   }
 
@@ -228,11 +228,14 @@ export function extractEyeFeatures(
   const rightEAR = computeEAR(p263, p362, p386, p374);
   const averageEAR = (leftEAR + rightEAR) / 2;
 
-  // Blink check threshold (0.16) — short involuntary blinks
-  const isBlinking = averageEAR < 0.16;
-  const status: TrackingStatus = isBlinking ? "blink_ignored" : "ready";
+  // Track / adapt open-eye baseline during clear open-eye intervals
+  if (averageEAR > 0.20) {
+    openEyeBaselineEAR = openEyeBaselineEAR * 0.95 + averageEAR * 0.05;
+  }
 
-  // Hold-blink / intentional closure threshold (0.14 — stricter)
+  // Early blink onset: EAR dropped by >= 20% from open-eye baseline
+  const isEarlyBlinkOnset = averageEAR < openEyeBaselineEAR * 0.80;
+  const isBlinking = isEarlyBlinkOnset || averageEAR < 0.16;
   const isEyesClosed = averageEAR < 0.14;
 
   // Track continuous closure duration
@@ -247,44 +250,77 @@ export function extractEyeFeatures(
     closedDurationMs = 0;
   }
 
-  // ── 1. Stable Eye Socket Centers and Widths (attached to bone, independent of eyelids) ──
+  // ── Early Blink Freeze Guard ──
+  // The instant avgEAR drops within 20% of open-eye baseline, freeze gaze coordinates
+  // at the last valid open-eye fixation point so pre-blink downward lid motion never dives cursor!
+  if (isEarlyBlinkOnset && lastValidFeatures !== null) {
+    return {
+      timestamp,
+      status: "blink_ignored",
+      leftIrisRatioX: lastValidFeatures.leftIrisRatioX,
+      leftIrisRatioY: lastValidFeatures.leftIrisRatioY,
+      rightIrisRatioX: lastValidFeatures.rightIrisRatioX,
+      rightIrisRatioY: lastValidFeatures.rightIrisRatioY,
+      leftEAR,
+      rightEAR,
+      averageEAR,
+      isBlinking: true,
+      isEyesClosed,
+      closedDurationMs,
+      headPose: lastValidFeatures.headPose,
+      featureVector: lastValidFeatures.featureVector,
+    };
+  }
+
+  // ── 1. Stable Eye Socket Centers and Widths (attached to skull bone) ──
   const leftEyeWidth = Math.max(1e-4, distance(p33, p133));
   const leftEyeCenterX = (p33.x + p133.x) / 2;
-  const leftEyeCenterY = (p33.y + p133.y) / 2;
+  // Eye Corner Baseline: strictly derived from rigid inner/outer canthi, NOT moving eyelid!
+  const leftCornerBaseY = (p33.y + p133.y) / 2;
 
   const rightEyeWidth = Math.max(1e-4, distance(p362, p263));
   const rightEyeCenterX = (p362.x + p263.x) / 2;
-  const rightEyeCenterY = (p362.y + p263.y) / 2;
+  const rightCornerBaseY = (p362.y + p263.y) / 2;
 
-  // ── 2. Relative Iris Displacements in Socket (normalized by bone eye width) ──
-  // Both eyes: negative = camera left (subject's right), positive = camera right (subject's left)
+  // ── 2. Relative Iris Displacements in Socket ──
+  // X: relative to eye center
   const rawLeftGazeX = (p468.x - leftEyeCenterX) / leftEyeWidth;
-  const rawLeftGazeY = (p468.y - leftEyeCenterY) / leftEyeWidth;
-
   const rawRightGazeX = (p473.x - rightEyeCenterX) / rightEyeWidth;
-  const rawRightGazeY = (p473.y - rightEyeCenterY) / rightEyeWidth;
 
-  // 3-frame rolling median filter kills single-frame micro-jitter & spikes
-  const leftGazeX = rollingMedian(historyLX, rawLeftGazeX);
-  const leftGazeY = rollingMedian(historyLY, rawLeftGazeY);
-  const rightGazeX = rollingMedian(historyRX, rawRightGazeX);
-  const rightGazeY = rollingMedian(historyRY, rawRightGazeY);
+  // Y: strictly relative to rigid eye corner baseline (inner + outer) / 2
+  const rawLeftGazeY = (p468.y - leftCornerBaseY) / leftEyeWidth;
+  const rawRightGazeY = (p473.y - rightCornerBaseY) / rightEyeWidth;
 
-  // ── 3. Normalized 0.0 to 1.0 Iris Ratios (for UI meters) ──
-  // Scale factor 2.5 maps normal eye motion (±0.20 of eye width) across 0.0 to 1.0
-  const leftIrisRatioX = clamp(0.5 + leftGazeX * 2.5, 0.0, 1.0);
-  const leftIrisRatioY = clamp(0.5 + leftGazeY * 2.5, 0.0, 1.0);
-  const rightIrisRatioX = clamp(0.5 + rightGazeX * 2.5, 0.0, 1.0);
-  const rightIrisRatioY = clamp(0.5 + rightGazeY * 2.5, 0.0, 1.0);
+  // 3-frame rolling median filter kills single-frame micro-spikes
+  const medLeftX = rollingMedian(historyLX, rawLeftGazeX);
+  const medLeftY = rollingMedian(historyLY, rawLeftGazeY);
+  const medRightX = rollingMedian(historyRX, rawRightGazeX);
+  const medRightY = rollingMedian(historyRY, rawRightGazeY);
 
-  // ── 4. Robust Head Pose Estimation ──
+  // ── 3. Horizontal Direction & Mirroring ──
+  // When looking physically LEFT, irises shift camera-right (positive raw displacement).
+  // With mirrorX=true (standard front webcam), effX becomes negative -> avgIrisX decreases toward 0.0.
+  // When looking physically RIGHT, irises shift camera-left -> effX positive -> avgIrisX increases toward 1.0.
+  const effLeftX = mirrorX ? -medLeftX : medLeftX;
+  const effRightX = mirrorX ? -medRightX : medRightX;
+  const effLeftY = medLeftY;
+  const effRightY = medRightY;
+
+  // ── 4. Normalized 0.0 to 1.0 Iris Ratios ──
+  const leftIrisRatioX = clamp(0.5 + effLeftX * 2.5, 0.0, 1.0);
+  const rightIrisRatioX = clamp(0.5 + effRightX * 2.5, 0.0, 1.0);
+  const leftIrisRatioY = clamp(0.5 + effLeftY * 3.0, 0.0, 1.0);
+  const rightIrisRatioY = clamp(0.5 + effRightY * 3.0, 0.0, 1.0);
+
+  const avgIrisX = (leftIrisRatioX + rightIrisRatioX) / 2;
+  const avgIrisY = (leftIrisRatioY + rightIrisRatioY) / 2;
+
+  // ── 5. Head Pose Estimation ──
   const interOcularDist = Math.max(1e-4, distance(p33, p263));
   const eyeMidpointX = (leftEyeCenterX + rightEyeCenterX) / 2;
-  const eyeMidpointY = (leftEyeCenterY + rightEyeCenterY) / 2;
+  const eyeMidpointY = (leftCornerBaseY + rightCornerBaseY) / 2;
 
-  // Yaw: horizontal nose displacement from eye center line
   const yawProxy = (p1.x - eyeMidpointX) / interOcularDist;
-  // Pitch: vertical nose displacement relative to eye line
   const pitchProxy = (p1.y - eyeMidpointY) / interOcularDist;
 
   const headPose: HeadPoseProxy = {
@@ -295,20 +331,19 @@ export function extractEyeFeatures(
     yawProxy,
   };
 
-  // ── 5. Zero-Centered Polynomial Feature Vector (solves matrix collinearity) ──
-  // Base vector: 6 zero-centered orthogonal features
-  const baseVector = [
-    leftGazeX,
-    leftGazeY,
-    rightGazeX,
-    rightGazeY,
-    yawProxy,
-    pitchProxy,
+  // ── 6. Pure Linear Feature Vector [1, avgIrisX, avgIrisY, headCenterX, headCenterY] ──
+  // Pure linear representation prevents non-linear polynomial edge blow-ups!
+  const featureVector = [
+    1.0,
+    avgIrisX,
+    avgIrisY,
+    headPose.noseTipX,
+    headPose.noseTipY,
   ];
 
-  const featureVector = expandPolynomialFeatures(baseVector);
+  const status: TrackingStatus = isBlinking ? "blink_ignored" : "ready";
 
-  return {
+  const features: EyeFeatures = {
     timestamp,
     status,
     leftIrisRatioX,
@@ -324,4 +359,10 @@ export function extractEyeFeatures(
     headPose,
     featureVector,
   };
+
+  if (!isBlinking) {
+    lastValidFeatures = features;
+  }
+
+  return features;
 }

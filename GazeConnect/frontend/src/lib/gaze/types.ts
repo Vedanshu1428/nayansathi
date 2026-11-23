@@ -97,21 +97,32 @@ export interface GazePoint {
   timestamp: number;
   confidence: number;        // 0.0 to 1.0
   status: TrackingStatus;
+  isCalibrated?: boolean;
 }
 
 export type SelectionMode = "hold_blink" | "slow_dwell" | "hybrid";
+
+export interface GazeSettings {
+  mirrorX: boolean;          // Default true for front-facing webcams
+  selectionMode: SelectionMode;
+  dwellTimeMs: number;
+  blinkHoldMs: number;
+  blinkCooldownMs: number;
+}
 
 export interface DwellSettings {
   dwellTimeMs: number;       // Time in ms to trigger dwell (e.g. 1200)
   exitGraceMs: number;       // Buffer to absorb jitter before dwell resets (e.g. 150)
   cooldownMs: number;        // Wait time after trigger before re-triggering (e.g. 600)
-  hitPaddingPx: number;      // Accessibility hit margin (e.g. 12)
+  hitPaddingPx: number;      // Accessibility hit margin (e.g. 24)
   /** Which trigger mode is active */
   selectionMode: SelectionMode;
   /** Ms of eye closure required to fire blink_click (default 450) */
   blinkHoldMs: number;
   /** Cooldown after blink_click (default 900) */
   blinkCooldownMs: number;
+  /** Front-facing webcam mirror toggle */
+  mirrorX?: boolean;
 }
 
 export interface DwellState {
@@ -137,26 +148,26 @@ export interface CursorSpeedPreset {
 export const CURSOR_SPEED_PRESETS: CursorSpeedPreset[] = [
   {
     label: "Very Slow / Precision",
-    minCutoff: 0.12,
-    beta: 0.002,
+    minCutoff: 0.10,
+    beta: 0.001,
     dCutoff: 1.0,
-    maxSpeedPxPerSec: 500,
+    maxSpeedPxPerSec: 450,
     deadzoneRadius: 28,
   },
   {
     label: "Slow / Balanced",
-    minCutoff: 0.22,
-    beta: 0.004,
+    minCutoff: 0.15,
+    beta: 0.002,
     dCutoff: 1.0,
-    maxSpeedPxPerSec: 900,
+    maxSpeedPxPerSec: 750,
     deadzoneRadius: 22,
   },
   {
     label: "Normal",
-    minCutoff: 0.60,
-    beta: 0.020,
+    minCutoff: 0.35,
+    beta: 0.008,
     dCutoff: 1.0,
-    maxSpeedPxPerSec: 1800,
-    deadzoneRadius: 10,
+    maxSpeedPxPerSec: 1200,
+    deadzoneRadius: 14,
   },
 ];

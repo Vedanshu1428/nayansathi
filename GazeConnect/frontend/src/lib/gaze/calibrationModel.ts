@@ -1,7 +1,9 @@
 /**
- * GazeConnect Polynomial Ridge Regression Calibration Engine
- * 2nd-degree polynomial expansion with L2 regularized Ridge Regression solver.
- * Robust zero-centered feature conditioning prevents matrix singularity and overfitting.
+ * GazeConnect Linear Ridge Regression Calibration Engine
+ * Pure 5-feature linear Ridge Regression solver ([1, avgIrisX, avgIrisY, headCenterX, headCenterY]).
+ * Eliminates non-linear polynomial edge blow-ups and wild extrapolations.
+ * Strictly clamps normalized coordinates to [0.02, 0.98].
+ * Parks cursor at screen center when uncalibrated.
  */
 
 import {
@@ -9,12 +11,10 @@ import {
   CalibrationModelData,
   CalibrationReport,
   EyeFeatures,
-  GazePoint,
 } from "./types";
-import { expandPolynomialFeatures } from "./featureExtractor";
 
-const RIDGE_LAMBDA = 0.05; // Balanced L2 regularization penalty
-const STORAGE_KEY = "gazeconnect_calibration_v1";
+const RIDGE_LAMBDA = 0.1; // Balanced L2 regularization penalty for pure linear fit
+const STORAGE_KEY = "gazeconnect_calibration_v2";
 
 /**
  * Solves linear system A * x = b using Gaussian elimination with partial pivoting.
@@ -98,7 +98,7 @@ function fitRidgeRegression(X: number[][], Y: number[], lambda: number): number[
     if (i > 0) {
       XtX[i][i] += lambda;
     } else {
-      XtX[i][i] += lambda * 0.1;
+      XtX[i][i] += lambda * 0.05;
     }
   }
 
@@ -116,7 +116,7 @@ function fitRidgeRegression(X: number[][], Y: number[], lambda: number): number[
 }
 
 /**
- * Trains polynomial calibration model from collected 9-point samples.
+ * Trains pure linear Ridge Regression calibration model from collected 9-point samples.
  * Uses 80% train / 20% validation split.
  */
 export function trainCalibrationModel(
@@ -153,11 +153,12 @@ export function trainCalibrationModel(
   });
 
   // Prepare training matrices (normalized 0 to 1 screen targets)
-  const X_train = trainSamples.map((s) => s.features);
+  // Each sample's feature vector is 5-dimensional: [1, avgIrisX, avgIrisY, headCenterX, headCenterY]
+  const X_train = trainSamples.map((s) => s.features.slice(0, 5));
   const Y_x_train = trainSamples.map((s) => s.target.screenX / screenWidth);
   const Y_y_train = trainSamples.map((s) => s.target.screenY / screenHeight);
 
-  // Fit Ridge Regression weights
+  // Fit Ridge Regression weights (5 weights for X, 5 weights for Y)
   const weightsX = fitRidgeRegression(X_train, Y_x_train, RIDGE_LAMBDA);
   const weightsY = fitRidgeRegression(X_train, Y_y_train, RIDGE_LAMBDA);
 
@@ -168,10 +169,15 @@ export function trainCalibrationModel(
   for (const s of evalSamples) {
     let normX = 0;
     let normY = 0;
-    for (let f = 0; f < s.features.length; f++) {
-      normX += s.features[f] * weightsX[f];
-      normY += s.features[f] * weightsY[f];
+    const feat = s.features.slice(0, 5);
+    for (let f = 0; f < feat.length; f++) {
+      normX += feat[f] * weightsX[f];
+      normY += feat[f] * weightsY[f];
     }
+    // Strict bounding box [0.02, 0.98]
+    normX = Math.max(0.02, Math.min(0.98, normX));
+    normY = Math.max(0.02, Math.min(0.98, normY));
+
     const predX = normX * screenWidth;
     const predY = normY * screenHeight;
 
@@ -188,7 +194,6 @@ export function trainCalibrationModel(
 
   // Resolution-independent stability score
   const screenDiag = Math.hypot(screenWidth, screenHeight);
-  // Calibration stability: 100% at 0 error, ~85% for standard webcam (~60-100px error)
   const stabilityScore = Math.max(
     20,
     Math.min(100, Math.round(100 * Math.exp(-meanValidationErrorPx / (screenDiag * 0.15))))
@@ -221,68 +226,47 @@ export function trainCalibrationModel(
 
 /**
  * Predicts screen coordinates from live eye features.
- * When a custom 9-point calibration model is available, uses the trained polynomial Ridge Regression weights.
- * When uncalibrated, uses an instant geometric eye-tracking model derived from normalized iris displacement
- * and head pose, so gaze tracking is active immediately.
+ * - When trained Ridge Regression calibration model is provided (5 weights),
+ *   computes linear projection and clamps strictly to [0.02, 0.98].
+ * - When uncalibrated, parks the cursor at exact screen center (screenWidth / 2, screenHeight / 2)
+ *   with isCalibrated: false, preventing erratic wild drift!
  */
 export function predictGaze(
   features: EyeFeatures,
   model: CalibrationModelData | null | undefined,
   screenWidth: number,
   screenHeight: number
-): { x: number; y: number } {
-  // 1. If trained Ridge Regression calibration model is provided, use it
-  if (model && model.weightsX && model.weightsX.length > 0) {
+): { x: number; y: number; isCalibrated: boolean } {
+  // 1. If trained 5-feature Ridge Regression calibration model is available, use it
+  if (model && model.weightsX && model.weightsX.length === 5) {
     let normX = 0;
     let normY = 0;
 
-    const len = Math.min(features.featureVector.length, model.weightsX.length);
-    for (let i = 0; i < len; i++) {
-      normX += features.featureVector[i] * model.weightsX[i];
-      normY += features.featureVector[i] * model.weightsY[i];
+    const feat = features.featureVector.slice(0, 5);
+    for (let i = 0; i < 5; i++) {
+      normX += feat[i] * model.weightsX[i];
+      normY += feat[i] * model.weightsY[i];
     }
 
-    // Constrain within screen bounds
-    const clampedX = Math.max(0, Math.min(screenWidth, normX * screenWidth));
-    const clampedY = Math.max(0, Math.min(screenHeight, normY * screenHeight));
+    // Strict clamping to [0.02, 0.98] to prevent out-of-screen extrapolation
+    const clampedNormX = Math.max(0.02, Math.min(0.98, normX));
+    const clampedNormY = Math.max(0.02, Math.min(0.98, normY));
 
-    return { x: clampedX, y: clampedY };
+    return {
+      x: clampedNormX * screenWidth,
+      y: clampedNormY * screenHeight,
+      isCalibrated: true,
+    };
   }
 
-  // 2. Default Geometric Gaze Model (active immediately without calibration)
-  // Uses zero-centered iris displacement in eye socket (from featureExtractor).
-  // leftIrisRatioX/Y are already 0.5-centered: 0.5 = center, >0.5 = right/down in camera frame.
-  //
-  // Direction conventions (MediaPipe raw, NON-mirrored video):
-  //   User looks screen-RIGHT → iris appears at LEFT side of eye socket in raw frame
-  //                           → leftIrisRatioX < 0.5  → (0.5 - ratio) > 0 → normX > 0.5 ✓
-  //   User looks screen-UP   → iris appears at TOP of eye socket in raw frame
-  //                           → leftIrisRatioY < 0.5  → (ratio - 0.5) < 0 → normY < 0.5 ✓
-  //
-  // Head pose is intentionally EXCLUDED from uncalibrated model:
-  //   pitchProxy ≈ 0.43 at typical webcam angle adds +0.21 offset → cursor stuck at 71% vertically.
-  //   Head pose is handled by the calibrated Ridge Regression model only.
-  const lx = features.leftIrisRatioX - 0.5;   // zero-centered: neg = camera-left = screen-right
-  const rx = features.rightIrisRatioX - 0.5;
-  const ly = features.leftIrisRatioY - 0.5;    // zero-centered: neg = camera-up = screen-up
-  const ry = features.rightIrisRatioY - 0.5;
-
-  const avgIrisX = (lx + rx) / 2;
-  const avgIrisY = (ly + ry) / 2;
-
-  // Gain tuning: 2.5× maps ±0.2 iris displacement → ±0.5 of screen (full range)
-  const gainX = 2.5;
-  const gainY = 3.0; // slightly higher vertical gain since eye vertical range is smaller
-
-  // Iris left in camera (avgIrisX < 0) → screen right (normX > 0.5), so we subtract
-  const normX = 0.5 - (avgIrisX * gainX);
-  // Iris up in camera (avgIrisY < 0) → screen top (normY < 0.5), so we add
-  const normY = 0.5 + (avgIrisY * gainY);
-
-  const clampedX = Math.max(0, Math.min(screenWidth, normX * screenWidth));
-  const clampedY = Math.max(0, Math.min(screenHeight, normY * screenHeight));
-
-  return { x: clampedX, y: clampedY };
+  // 2. Strict Uncalibrated Fallback:
+  // Do NOT let an uncalibrated guess move the cursor across the screen.
+  // Park cursor steadily at screen center until 9-point calibration is completed!
+  return {
+    x: screenWidth / 2,
+    y: screenHeight / 2,
+    isCalibrated: false,
+  };
 }
 
 /**
@@ -300,13 +284,20 @@ export function saveCalibrationModel(model: CalibrationModelData): void {
 
 /**
  * Loads saved calibration model from localStorage if available.
+ * Discards legacy or incompatible models (must have featureDim === 5).
  */
 export function loadCalibrationModel(): CalibrationModelData | null {
   if (typeof window !== "undefined") {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
-        return JSON.parse(stored) as CalibrationModelData;
+        const parsed = JSON.parse(stored) as CalibrationModelData;
+        if (parsed.featureDim === 5 && parsed.weightsX && parsed.weightsX.length === 5) {
+          return parsed;
+        } else {
+          // Remove outdated legacy model
+          localStorage.removeItem(STORAGE_KEY);
+        }
       }
     } catch (e) {
       console.error("Failed to parse stored calibration model:", e);

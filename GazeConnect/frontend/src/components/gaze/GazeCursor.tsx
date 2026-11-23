@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { GazePoint, TrackingStatus, SelectionMode, CURSOR_SPEED_PRESETS } from "@/lib/gaze/types";
-import { Sliders } from "lucide-react";
+import { Sliders, FlipHorizontal, AlertCircle } from "lucide-react";
 
 interface GazeCursorProps {
   gazePoint: GazePoint | null;
@@ -10,6 +10,9 @@ interface GazeCursorProps {
   isCoolingDown: boolean;
   status: TrackingStatus;
   visible?: boolean;
+  isCalibrated?: boolean;
+  mirrorX?: boolean;
+  onMirrorXChange?: (m: boolean) => void;
   dwellTimeMs: number;
   onDwellTimeChange: (newTime: number) => void;
   smoothingBeta: number;
@@ -30,6 +33,9 @@ export default function GazeCursor({
   isCoolingDown,
   status,
   visible = true,
+  isCalibrated = true,
+  mirrorX = true,
+  onMirrorXChange,
   dwellTimeMs,
   onDwellTimeChange,
   smoothingBeta,
@@ -53,9 +59,11 @@ export default function GazeCursor({
   const strokeDashoffset = circumference * (1 - dwellProgress);
 
   // Status-based colors
-  // Flash green when blink fires (blinkProgress >= 1.0), blue during cooldown, teal otherwise
+  // Flash green when blink fires (blinkProgress >= 1.0), blue during cooldown, amber if uncalibrated, teal otherwise
   const cursorColor =
-    status === "ready"
+    !isCalibrated
+      ? "#DC2626" // Red when calibration required
+      : status === "ready"
       ? blinkProgress >= 1.0
         ? "#22C55E" // Green flash on blink fire
         : isCoolingDown
@@ -95,7 +103,7 @@ export default function GazeCursor({
           />
 
           {/* Blink-hold progress ring (amber, behind main ring) */}
-          {isBlinkHolding && (
+          {isBlinkHolding && isCalibrated && (
             <circle
               cx="30"
               cy="30"
@@ -119,7 +127,7 @@ export default function GazeCursor({
             stroke={cursorColor}
             strokeWidth="5"
             strokeDasharray={circumference}
-            strokeDashoffset={strokeDashoffset}
+            strokeDashoffset={isCalibrated ? strokeDashoffset : circumference}
             strokeLinecap="round"
             transform="rotate(-90 30 30)"
             className="transition-all duration-75"
@@ -129,26 +137,34 @@ export default function GazeCursor({
           <circle
             cx="30"
             cy="30"
-            r="4"
+            r={4}
             fill={cursorColor}
             stroke="#FFFFFF"
             strokeWidth="1.5"
           />
         </svg>
 
-        {/* Labels */}
-        {isCoolingDown && (
+        {/* Uncalibrated Status Badge — Parked at Center */}
+        {!isCalibrated && (
+          <div className="absolute top-14 left-1/2 -translate-x-1/2 bg-red-600 text-white text-[10px] font-black px-2.5 py-1 rounded-full shadow-lg whitespace-nowrap flex items-center gap-1.5 animate-pulse border border-red-300">
+            <AlertCircle className="w-3 h-3 text-white" />
+            <span>CALIBRATION REQUIRED</span>
+          </div>
+        )}
+
+        {/* Labels when calibrated */}
+        {isCalibrated && isCoolingDown && (
           <div className="absolute top-14 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded shadow whitespace-nowrap">
             COOLDOWN
           </div>
         )}
-        {status === "blink_ignored" && (
+        {isCalibrated && status === "blink_ignored" && !isBlinkHolding && (
           <div className="absolute top-14 left-1/2 -translate-x-1/2 bg-amber-500 text-black text-[9px] font-bold px-1.5 py-0.5 rounded shadow whitespace-nowrap">
             BLINK
           </div>
         )}
         {/* HOLD label when eyes closed */}
-        {isBlinkHolding && (
+        {isCalibrated && isBlinkHolding && (
           <div className="absolute top-14 left-1/2 -translate-x-1/2 bg-amber-500 text-black text-[9px] font-bold px-1.5 py-0.5 rounded shadow whitespace-nowrap">
             HOLD
           </div>
@@ -174,6 +190,27 @@ export default function GazeCursor({
               </button>
             </div>
 
+            {/* Section 0 — Camera Mirror X */}
+            <div className="space-y-1.5">
+              <div className="font-semibold text-slate-700 text-[11px] uppercase tracking-wide flex items-center gap-1">
+                <FlipHorizontal className="w-3.5 h-3.5 text-teal-600" />
+                <span>Camera Direction</span>
+              </div>
+              <button
+                type="button"
+                data-dwell="true"
+                onClick={() => onMirrorXChange?.(!mirrorX)}
+                className={`w-full py-2 px-3 rounded-lg text-xs font-bold border transition-all text-left flex items-center justify-between ${
+                  mirrorX
+                    ? "bg-teal-50 border-teal-500 text-teal-900"
+                    : "bg-slate-50 border-slate-300 text-slate-700"
+                }`}
+              >
+                <span>{mirrorX ? "Mirror X: ON (Front Webcam)" : "Mirror X: OFF (Unmirrored)"}</span>
+                <span className="text-[10px] font-mono text-teal-700 underline">Flip</span>
+              </button>
+            </div>
+
             {/* Section 1 — Trigger Mode */}
             <div className="space-y-1.5">
               <div className="font-semibold text-slate-700 text-[11px] uppercase tracking-wide">Trigger Mode</div>
@@ -185,7 +222,7 @@ export default function GazeCursor({
                     onClick={() => onSelectionModeChange(m)}
                     className={`flex-1 py-2 rounded-lg text-[11px] font-bold border transition-all ${
                       selectionMode === m
-                        ? "bg-teal-600 text-white border-teal-600"
+                        ? "bg-teal-600 text-white border-teal-600 shadow-sm"
                         : "border-slate-300 text-slate-600"
                     }`}
                   >
@@ -206,7 +243,7 @@ export default function GazeCursor({
                     onClick={() => onCursorSpeedPresetChange(i)}
                     className={`flex-1 py-2 rounded-lg text-[10px] font-bold border transition-all ${
                       cursorSpeedPresetIndex === i
-                        ? "bg-indigo-600 text-white border-indigo-600"
+                        ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
                         : "border-slate-300 text-slate-600"
                     }`}
                   >
