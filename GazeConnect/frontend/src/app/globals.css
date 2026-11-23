@@ -1,0 +1,74 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 10% 98%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --primary: 173 80% 32%;
+    --primary-foreground: 0 0% 100%;
+    --emergency: 0 84% 60%;
+  }
+
+  .high-contrast {
+    --background: 0 0% 0%;
+    --foreground: 48 96% 53%;
+    --card: 0 0% 5%;
+    --card-foreground: 0 0% 100%;
+    --primary: 48 96% 53%;
+    --primary-foreground: 0 0% 0%;
+  }
+
+  body {
+    @apply bg-ice-50 text-navy-900 antialiased selection:bg-teal-500 selection:text-white min-h-screen flex flex-col font-sans;
+  }
+}
+
+/* Gaze target dwell styling */
+[data-dwell="true"] {
+  position: relative;
+  transition: transform 0.15s ease-out, box-shadow 0.15s ease-out, background-color 0.15s ease-out;
+  cursor: pointer;
+  user-select: none;
+}
+
+[data-dwell="true"]:hover,
+[data-dwell="true"].dwell-hover {
+  outline: 3px solid #0D9488;
+  outline-offset: 2px;
+}
+
+.high-contrast [data-dwell="true"]:hover,
+.high-contrast [data-dwell="true"].dwell-hover {
+  outline: 4px solid #FACC15;
+  outline-offset: 3px;
+}
+
+/* Radial Dwell Progress Animations */
+@keyframes dwellProgress {
+  0% {
+    stroke-dashoffset: 283;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* High Contrast Overrides */
+.high-contrast {
+  background-color: #000000 !important;
+  color: #FACC15 !important;
+}
+
+.high-contrast button {
+  border-color: #FACC15 !important;
+}
+
+/* Accessibility Focus Ring */
+*:focus-visible {
+  outline: 3px solid #0D9488;
+  outline-offset: 2px;
+}
