@@ -21,7 +21,189 @@ import {
   DiscreteDirection,
 } from "./types";
 
-export class DwellEngine {
+// Helper to clear any existing focus highlight
+  private clearFocus(): void {
+    const prev = document.querySelector('[data-gaze-focused="true"]');
+    if (prev) {
+      prev.removeAttribute('data-gaze-focused');
+      prev.classList.remove('gazeconnect-discrete-focus');
+    }
+  }
+
+  // Return‑to‑Center lock helpers
+  private isInDeadZone(deltaX: number, deltaY: number): boolean {
+    const thr = GAZE_SENSITIVITY_THRESHOLDS[this.getSensitivity()];
+    return Math.abs(deltaX) < thr.x * 0.5 && Math.abs(deltaY) < thr.y * 0.5;
+  }
+
+  /**
+   * Moves focus one step in the given direction, then locks until the user returns to the centre.
+   * Called from GazeProvider when a discrete direction is detected.
+   */
+  public stepDirection(dir: DiscreteDirection, timestamp: number, deltaX: number, deltaY: number): void {
+    // If we are in lock mode, only release when both cooldown passed and gaze is back to centre
+    if (this.mustReturnToCenter) {
+      if (timestamp >= this.stepCooldownEnd && this.isInDeadZone(deltaX, deltaY)) {
+        this.mustReturnToCenter = false;
+      } else {
+        // Still locked – ignore any new direction
+        return;
+      }
+    }
+
+    if (dir === "CENTER") return; // no movement needed
+
+    // Find all dwellable elements
+    const candidates = Array.from(document.querySelectorAll('[data-dwell="true"]')) as HTMLElement[];
+    if (candidates.length === 0) return;
+
+    // Determine the currently focused element (if any)
+    const current = document.querySelector('[data-gaze-focused="true"]') as HTMLElement | null;
+    let target: HTMLElement | null = null;
+    if (current) {
+      const idx = candidates.indexOf(current);
+      if (idx !== -1) {
+        // Simple linear ordering: RIGHT/DOWN -> next, LEFT/UP -> previous
+        if (dir === "RIGHT" || dir === "DOWN") {
+          target = candidates[(idx + 1) % candidates.length];
+        } else if (dir === "LEFT" || dir === "UP") {
+          target = candidates[(idx - 1 + candidates.length) % candidates.length];
+        }
+      }
+    }
+    // If no current focus, just pick the first candidate
+    if (!target) target = candidates[0];
+
+    if (target) {
+      this.clearFocus();
+      target.setAttribute('data-gaze-focused', 'true');
+      target.classList.add('gazeconnect-discrete-focus');
+      // Engage lock
+      this.mustReturnToCenter = true;
+      this.stepCooldownEnd = timestamp + 1500; // 1.5 s lock
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Updated blink‑hold handling – fire a single click after 600 ms closed
+  // ---------------------------------------------------------------------
+  private blinkClickLocked: boolean = false;
+
+  public update(
+    x: number,
+    y: number,
+    timestamp: number,
+    eyeFeatures?: { isEyesClosed: boolean; closedDurationMs: number; avgEAR: number }
+  ): DwellState {
+    const isEyesClosed = eyeFeatures?.isEyesClosed ?? false;
+    const closedDurationMs = eyeFeatures?.closedDurationMs ?? 0;
+
+    // Track last open‑eye gaze for fallback clicks
+    if (!isEyesClosed) {
+      this.lastOpenGazeX = x;
+      this.lastOpenGazeY = y;
+      // Reset blink‑click lock when eyes open
+      this.blinkClickLocked = false;
+    }
+
+    const effectiveX = isEyesClosed ? this.lastOpenGazeX : x;
+    const effectiveY = isEyesClosed ? this.lastOpenGazeY : y;
+
+    // ---------- Cell‑snap (unchanged) ----------
+    let snappedX: number | undefined;
+    let snappedY: number | undefined;
+    let isSnapped = false;
+    let detectedElement: HTMLElement | null = null;
+
+    if (this.settings.enableCellSnap) {
+      const snapResult = this.findSnapTarget(effectiveX, effectiveY);
+      if (snapResult) {
+        this.snappedElement = snapResult.element;
+        this.snappedCenterX = snapResult.centerX;
+        this.snappedCenterY = snapResult.centerY;
+        snappedX = snapResult.centerX;
+        snappedY = snapResult.centerY;
+        isSnapped = true;
+        detectedElement = snapResult.element;
+      } else {
+        this.snappedElement = null;
+        detectedElement = this.findDwellElement(effectiveX, effectiveY);
+      }
+    } else {
+      detectedElement = this.findDwellElement(effectiveX, effectiveY);
+    }
+
+    // ---------- Cool‑down handling (blink click) ----------
+    if (this.isCoolingDown) {
+      if (timestamp < this.cooldownEndTime) {
+        return {
+          targetElement: this.currentTarget,
+          dwellProgress: 0,
+          isCoolingDown: true,
+          lastSelectedElement: this.lastSelectedElement,
+          blinkProgress: 0,
+          isBlinkHolding: this.isBlinkHolding,
+          snappedX,
+          snappedY,
+          isSnapped,
+        };
+      } else {
+        this.isCoolingDown = false;
+      }
+    }
+
+    // ---------- Blink‑hold click ----------
+    if (isEyesClosed) {
+      // Show visual blink progress but do not move focus
+      const blinkProgress = Math.min(1, closedDurationMs / (this.settings.blinkHoldMs ?? 450));
+      this.isBlinkHolding = true;
+
+      if (closedDurationMs >= (this.settings.blinkHoldMs ?? 450) && !this.blinkClickLocked) {
+        const clickTarget = detectedElement || this.findDwellElement(this.lastOpenGazeX, this.lastOpenGazeY);
+        if (clickTarget) {
+          clickTarget.click();
+        }
+        this.blinkClickLocked = true;
+        // After a successful click we lock further actions for 1 second
+        this.isCoolingDown = true;
+        this.cooldownEndTime = timestamp + 1000;
+        this.lastSelectedElement = clickTarget;
+      }
+
+      return {
+        targetElement: this.currentTarget,
+        dwellProgress: 0,
+        isCoolingDown: this.isCoolingDown,
+        lastSelectedElement: this.lastSelectedElement,
+        blinkProgress,
+        isBlinkHolding: this.isBlinkHolding,
+        snappedX,
+        snappedY,
+        isSnapped,
+      };
+    }
+
+    // When eyes are open, reset blink‑holding flag
+    this.isBlinkHolding = false;
+
+    // ---------- No auto‑scan or dwell‑selection in this simplified mode ----------
+    // We simply keep the current focus (if any) and return basic state.
+    return {
+      targetElement: this.currentTarget,
+      dwellProgress: 0,
+      isCoolingDown: false,
+      lastSelectedElement: this.lastSelectedElement,
+      blinkProgress: 0,
+      isBlinkHolding: false,
+      snappedX,
+      snappedY,
+      isSnapped,
+    };
+  }
+
+  private mustReturnToCenter: boolean = false;
+  private stepCooldownEnd: number = 0; // timestamp when lock expires
+
   private settings: DwellSettings;
   private currentTarget: HTMLElement | null = null;
   private dwellStartTime: number | null = null;

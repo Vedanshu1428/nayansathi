@@ -53,6 +53,9 @@ export type DiscreteDirection = "LEFT" | "RIGHT" | "UP" | "DOWN" | "CENTER";
 export type GazeSensitivity = "low" | "medium" | "high";
 
 export const GAZE_SENSITIVITY_THRESHOLDS: Record<GazeSensitivity, { x: number; y: number }> = {
+  high: { x: 0.10, y: 0.08 },
+  medium: { x: 0.14, y: 0.12 },
+  low: { x: 0.19, y: 0.16 },
   high: { x: 0.05, y: 0.04 },
   medium: { x: 0.08, y: 0.06 },
   low: { x: 0.12, y: 0.09 },
