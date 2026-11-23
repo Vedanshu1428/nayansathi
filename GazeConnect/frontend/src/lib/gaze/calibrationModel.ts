@@ -1,9 +1,13 @@
 /**
- * GazeConnect Linear Ridge Regression Calibration Engine
- * Pure 5-feature linear Ridge Regression solver ([1, avgIrisX, avgIrisY, headCenterX, headCenterY]).
- * Eliminates non-linear polynomial edge blow-ups and wild extrapolations.
- * Strictly clamps normalized coordinates to [0.02, 0.98].
- * Parks cursor at screen center when uncalibrated.
+ * GazeConnect Piecewise 3x3 Bilinear + Linear Ridge Regression Hybrid Calibration Engine
+ *
+ * Upgrades:
+ * 1. Piecewise 3x3 Bilinear grid mapping: Maps (gazeX, gazeY) precisely to screen zones
+ *    based on median feature vectors captured at each of the 9 anchor points.
+ * 2. Blends piecewise grid mapping (70%) with global Ridge Regression (30%) for seamless
+ *    continuity, preventing cross-screen warping and edge distortion.
+ * 3. Fallback uncalibrated parking at screen center with isCalibrated: false.
+ * 4. Strictly clamps predicted coordinates to [0.02, 0.98] of screen dimensions.
  */
 
 import {
@@ -11,21 +15,20 @@ import {
   CalibrationModelData,
   CalibrationReport,
   EyeFeatures,
+  GridAnchor,
 } from "./types";
 
-const RIDGE_LAMBDA = 0.1; // Balanced L2 regularization penalty for pure linear fit
-const STORAGE_KEY = "gazeconnect_calibration_v2";
+const RIDGE_LAMBDA = 0.1; // Balanced L2 regularization penalty for linear fit
+const STORAGE_KEY = "gazeconnect_calibration_v3";
 
 /**
  * Solves linear system A * x = b using Gaussian elimination with partial pivoting.
- * A is an n x n matrix, b is an n-length vector.
  */
 function solveLinearSystem(A: number[][], b: number[]): number[] {
   const n = A.length;
   const M: number[][] = A.map((row) => [...row]);
   const y: number[] = [...b];
 
-  // Forward elimination with partial pivoting
   for (let i = 0; i < n; i++) {
     let maxRow = i;
     let maxVal = Math.abs(M[i][i]);
@@ -60,7 +63,6 @@ function solveLinearSystem(A: number[][], b: number[]): number[] {
     }
   }
 
-  // Back substitution
   const x: number[] = new Array(n).fill(0);
   for (let i = n - 1; i >= 0; i--) {
     let sum = y[i];
@@ -81,7 +83,6 @@ function fitRidgeRegression(X: number[][], Y: number[], lambda: number): number[
   const numSamples = X.length;
   const numFeatures = X[0].length;
 
-  // Compute X^T * X
   const XtX: number[][] = Array.from({ length: numFeatures }, () =>
     new Array(numFeatures).fill(0)
   );
@@ -94,7 +95,6 @@ function fitRidgeRegression(X: number[][], Y: number[], lambda: number): number[
       }
       XtX[i][j] = sum;
     }
-    // Add L2 ridge penalty to diagonal (skip bias term at index 0 for better fit)
     if (i > 0) {
       XtX[i][i] += lambda;
     } else {
@@ -102,7 +102,6 @@ function fitRidgeRegression(X: number[][], Y: number[], lambda: number): number[
     }
   }
 
-  // Compute X^T * Y
   const XtY: number[] = new Array(numFeatures).fill(0);
   for (let i = 0; i < numFeatures; i++) {
     let sum = 0;
@@ -116,8 +115,127 @@ function fitRidgeRegression(X: number[][], Y: number[], lambda: number): number[
 }
 
 /**
- * Trains pure linear Ridge Regression calibration model from collected 9-point samples.
- * Uses 80% train / 20% validation split.
+ * Computes median value of an array of numbers.
+ */
+function median(values: number[]): number {
+  if (values.length === 0) return 0.5;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/**
+ * Builds the 9 GridAnchor anchors corresponding to the 3x3 calibration grid:
+ * Target IDs:
+ * 0: (row 0, col 0) - Top Left
+ * 1: (row 0, col 1) - Top Center
+ * 2: (row 0, col 2) - Top Right
+ * 3: (row 1, col 0) - Center Left
+ * 4: (row 1, col 1) - Center Center
+ * 5: (row 1, col 2) - Center Right
+ * 6: (row 2, col 0) - Bottom Left
+ * 7: (row 2, col 1) - Bottom Center
+ * 8: (row 2, col 2) - Bottom Right
+ */
+function buildGridAnchors(samples: CalibrationSample[]): GridAnchor[] {
+  const anchors: GridAnchor[] = [];
+
+  for (let targetId = 0; targetId < 9; targetId++) {
+    const row = Math.floor(targetId / 3);
+    const col = targetId % 3;
+
+    const targetSamples = samples.filter((s) => s.targetId === targetId);
+    if (targetSamples.length === 0) continue;
+
+    // Discard upper/lower 10% outliers before taking median
+    const sortedX = targetSamples.map((s) => s.features[1]).sort((a, b) => a - b);
+    const sortedY = targetSamples.map((s) => s.features[2]).sort((a, b) => a - b);
+
+    const trimCount = Math.floor(targetSamples.length * 0.1);
+    const trimmedX = sortedX.slice(trimCount, sortedX.length - trimCount || 1);
+    const trimmedY = sortedY.slice(trimCount, sortedY.length - trimCount || 1);
+
+    const medX = median(trimmedX);
+    const medY = median(trimmedY);
+
+    const firstSample = targetSamples[0];
+    anchors.push({
+      targetId,
+      row,
+      col,
+      targetScreenX: firstSample.target.screenX,
+      targetScreenY: firstSample.target.screenY,
+      medianGazeX: medX,
+      medianGazeY: medY,
+    });
+  }
+
+  return anchors;
+}
+
+/**
+ * Evaluates Piecewise 3x3 Bilinear interpolation for given (gazeX, gazeY).
+ * Finds the bounding 2x2 cell in the 3x3 grid and interpolates targetScreenX and targetScreenY.
+ */
+function evaluatePiecewiseGrid(
+  gazeX: number,
+  gazeY: number,
+  anchors: GridAnchor[]
+): { screenX: number; screenY: number } | null {
+  if (anchors.length < 9) return null;
+
+  // Map anchors by row and col
+  const grid: GridAnchor[][] = [
+    [anchors[0], anchors[1], anchors[2]],
+    [anchors[3], anchors[4], anchors[5]],
+    [anchors[6], anchors[7], anchors[8]],
+  ];
+
+  // Determine row interval (cellRow in {0, 1})
+  let cellRow = 0;
+  if (gazeY > grid[1][1].medianGazeY) {
+    cellRow = 1;
+  }
+
+  // Determine col interval (cellCol in {0, 1})
+  let cellCol = 0;
+  if (gazeX > grid[1][1].medianGazeX) {
+    cellCol = 1;
+  }
+
+  // The 4 bounding anchors of the active quad
+  const A = grid[cellRow][cellCol];         // Top-Left of quad
+  const B = grid[cellRow][cellCol + 1];     // Top-Right of quad
+  const C = grid[cellRow + 1][cellCol];     // Bottom-Left of quad
+  const D = grid[cellRow + 1][cellCol + 1]; // Bottom-Right of quad
+
+  // Compute normalized quad fractions u and v
+  const denomX = Math.max(1e-5, (B.medianGazeX + D.medianGazeX) / 2 - (A.medianGazeX + C.medianGazeX) / 2);
+  const leftX = (A.medianGazeX + C.medianGazeX) / 2;
+  const u = Math.max(0, Math.min(1, (gazeX - leftX) / denomX));
+
+  const denomY = Math.max(1e-5, (C.medianGazeY + D.medianGazeY) / 2 - (A.medianGazeY + B.medianGazeY) / 2);
+  const topY = (A.medianGazeY + B.medianGazeY) / 2;
+  const v = Math.max(0, Math.min(1, (gazeY - topY) / denomY));
+
+  // Bilinear interpolation across the 4 quad targets
+  const screenX =
+    (1 - u) * (1 - v) * A.targetScreenX +
+    u * (1 - v) * B.targetScreenX +
+    (1 - u) * v * C.targetScreenX +
+    u * v * D.targetScreenX;
+
+  const screenY =
+    (1 - u) * (1 - v) * A.targetScreenY +
+    u * (1 - v) * B.targetScreenY +
+    (1 - u) * v * C.targetScreenY +
+    u * v * D.targetScreenY;
+
+  return { screenX, screenY };
+}
+
+/**
+ * Trains Piecewise 3x3 Bilinear + Ridge Hybrid calibration model from collected 9-point samples.
  */
 export function trainCalibrationModel(
   samples: CalibrationSample[],
@@ -129,7 +247,10 @@ export function trainCalibrationModel(
     throw new Error("Insufficient calibration samples to train model.");
   }
 
-  // Stratified train / validation split
+  // 1. Build 3x3 Grid Anchors
+  const anchors = buildGridAnchors(samples);
+
+  // 2. Stratified train / validation split for global Ridge Regression
   const trainSamples: CalibrationSample[] = [];
   const valSamples: CalibrationSample[] = [];
 
@@ -152,34 +273,41 @@ export function trainCalibrationModel(
     }
   });
 
-  // Prepare training matrices (normalized 0 to 1 screen targets)
-  // Each sample's feature vector is 5-dimensional: [1, avgIrisX, avgIrisY, headCenterX, headCenterY]
   const X_train = trainSamples.map((s) => s.features.slice(0, 5));
   const Y_x_train = trainSamples.map((s) => s.target.screenX / screenWidth);
   const Y_y_train = trainSamples.map((s) => s.target.screenY / screenHeight);
 
-  // Fit Ridge Regression weights (5 weights for X, 5 weights for Y)
+  // Fit Ridge Regression weights
   const weightsX = fitRidgeRegression(X_train, Y_x_train, RIDGE_LAMBDA);
   const weightsY = fitRidgeRegression(X_train, Y_y_train, RIDGE_LAMBDA);
 
-  // Evaluate on validation set
+  // Evaluate hybrid prediction on validation set
   let totalErrorPx = 0;
   const evalSamples = valSamples.length > 0 ? valSamples : trainSamples;
 
   for (const s of evalSamples) {
-    let normX = 0;
-    let normY = 0;
     const feat = s.features.slice(0, 5);
+    let ridgeNormX = 0;
+    let ridgeNormY = 0;
     for (let f = 0; f < feat.length; f++) {
-      normX += feat[f] * weightsX[f];
-      normY += feat[f] * weightsY[f];
+      ridgeNormX += feat[f] * weightsX[f];
+      ridgeNormY += feat[f] * weightsY[f];
     }
-    // Strict bounding box [0.02, 0.98]
-    normX = Math.max(0.02, Math.min(0.98, normX));
-    normY = Math.max(0.02, Math.min(0.98, normY));
+    const ridgeScreenX = ridgeNormX * screenWidth;
+    const ridgeScreenY = ridgeNormY * screenHeight;
 
-    const predX = normX * screenWidth;
-    const predY = normY * screenHeight;
+    const gridPred = evaluatePiecewiseGrid(feat[1], feat[2], anchors);
+    let predX = ridgeScreenX;
+    let predY = ridgeScreenY;
+
+    if (gridPred) {
+      // 70% Piecewise Grid + 30% Ridge
+      predX = 0.70 * gridPred.screenX + 0.30 * ridgeScreenX;
+      predY = 0.70 * gridPred.screenY + 0.30 * ridgeScreenY;
+    }
+
+    predX = Math.max(0.02 * screenWidth, Math.min(0.98 * screenWidth, predX));
+    predY = Math.max(0.02 * screenHeight, Math.min(0.98 * screenHeight, predY));
 
     const dx = predX - s.target.screenX;
     const dy = predY - s.target.screenY;
@@ -192,7 +320,6 @@ export function trainCalibrationModel(
     ? Math.round((samples.length / totalAttempted) * 100)
     : 0;
 
-  // Resolution-independent stability score
   const screenDiag = Math.hypot(screenWidth, screenHeight);
   const stabilityScore = Math.max(
     20,
@@ -217,6 +344,7 @@ export function trainCalibrationModel(
     weightsY,
     trainedAt: new Date().toISOString(),
     featureDim: weightsX.length,
+    anchors,
     report,
   };
 
@@ -225,11 +353,7 @@ export function trainCalibrationModel(
 }
 
 /**
- * Predicts screen coordinates from live eye features.
- * - When trained Ridge Regression calibration model is provided (5 weights),
- *   computes linear projection and clamps strictly to [0.02, 0.98].
- * - When uncalibrated, parks the cursor at exact screen center (screenWidth / 2, screenHeight / 2)
- *   with isCalibrated: false, preventing erratic wild drift!
+ * Predicts screen coordinates from live eye features using Piecewise 3x3 Grid + Ridge Hybrid.
  */
 export function predictGaze(
   features: EyeFeatures,
@@ -237,31 +361,45 @@ export function predictGaze(
   screenWidth: number,
   screenHeight: number
 ): { x: number; y: number; isCalibrated: boolean } {
-  // 1. If trained 5-feature Ridge Regression calibration model is available, use it
   if (model && model.weightsX && model.weightsX.length === 5) {
-    let normX = 0;
-    let normY = 0;
-
     const feat = features.featureVector.slice(0, 5);
+    const gazeX = features.gazeX ?? feat[1];
+    const gazeY = features.gazeY ?? feat[2];
+
+    // 1. Ridge global prediction
+    let ridgeNormX = 0;
+    let ridgeNormY = 0;
     for (let i = 0; i < 5; i++) {
-      normX += feat[i] * model.weightsX[i];
-      normY += feat[i] * model.weightsY[i];
+      ridgeNormX += feat[i] * model.weightsX[i];
+      ridgeNormY += feat[i] * model.weightsY[i];
+    }
+    const ridgeX = ridgeNormX * screenWidth;
+    const ridgeY = ridgeNormY * screenHeight;
+
+    // 2. Piecewise 3x3 grid prediction (if 9 anchors are available)
+    let finalX = ridgeX;
+    let finalY = ridgeY;
+
+    if (model.anchors && model.anchors.length === 9) {
+      const gridPred = evaluatePiecewiseGrid(gazeX, gazeY, model.anchors);
+      if (gridPred) {
+        finalX = 0.70 * gridPred.screenX + 0.30 * ridgeX;
+        finalY = 0.70 * gridPred.screenY + 0.30 * ridgeY;
+      }
     }
 
-    // Strict clamping to [0.02, 0.98] to prevent out-of-screen extrapolation
-    const clampedNormX = Math.max(0.02, Math.min(0.98, normX));
-    const clampedNormY = Math.max(0.02, Math.min(0.98, normY));
+    // Strict clamping to [0.02, 0.98]
+    const clampedX = Math.max(0.02 * screenWidth, Math.min(0.98 * screenWidth, finalX));
+    const clampedY = Math.max(0.02 * screenHeight, Math.min(0.98 * screenHeight, finalY));
 
     return {
-      x: clampedNormX * screenWidth,
-      y: clampedNormY * screenHeight,
+      x: clampedX,
+      y: clampedY,
       isCalibrated: true,
     };
   }
 
-  // 2. Strict Uncalibrated Fallback:
-  // Do NOT let an uncalibrated guess move the cursor across the screen.
-  // Park cursor steadily at screen center until 9-point calibration is completed!
+  // Uncalibrated Fallback: Firmly parked at screen center
   return {
     x: screenWidth / 2,
     y: screenHeight / 2,
@@ -284,7 +422,6 @@ export function saveCalibrationModel(model: CalibrationModelData): void {
 
 /**
  * Loads saved calibration model from localStorage if available.
- * Discards legacy or incompatible models (must have featureDim === 5).
  */
 export function loadCalibrationModel(): CalibrationModelData | null {
   if (typeof window !== "undefined") {
@@ -295,7 +432,6 @@ export function loadCalibrationModel(): CalibrationModelData | null {
         if (parsed.featureDim === 5 && parsed.weightsX && parsed.weightsX.length === 5) {
           return parsed;
         } else {
-          // Remove outdated legacy model
           localStorage.removeItem(STORAGE_KEY);
         }
       }

@@ -163,7 +163,12 @@ export default function WebcamTracker({
 
             if (results.faceLandmarks && results.faceLandmarks.length > 0) {
               const landmarks = results.faceLandmarks[0];
-              const features = extractEyeFeatures(landmarks, now);
+              // Pass faceBlendshapes categories if enabled and returned
+              const blendshapeCategories =
+                results.faceBlendshapes && results.faceBlendshapes.length > 0
+                  ? results.faceBlendshapes[0].categories
+                  : undefined;
+              const features = extractEyeFeatures(landmarks, now, blendshapeCategories);
 
               updateStatus(features.status);
               onFeaturesUpdateRef.current?.(features);

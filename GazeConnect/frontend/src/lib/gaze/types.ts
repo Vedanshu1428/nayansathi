@@ -44,16 +44,22 @@ export interface EyeFeatures {
   leftIrisRatioY: number;    // 0.0 to 1.0 (superior to inferior)
   rightIrisRatioX: number;   // 0.0 to 1.0
   rightIrisRatioY: number;   // 0.0 to 1.0
+  /** 3D head-pose-invariant gaze signals derived from MediaPipe blendshapes */
+  gazeX?: number;            // 0.0 to 1.0
+  gazeY?: number;            // 0.0 to 1.0
+  blendshapesGazeX?: number; // Raw normalized blendshape gaze X
+  blendshapesGazeY?: number; // Raw normalized blendshape gaze Y
   leftEAR: number;           // Eye Aspect Ratio
   rightEAR: number;
   averageEAR: number;
+  openEyeEARBaseline?: number;
   isBlinking: boolean;
-  /** True when avgEAR < 0.14 — intentional closure tracking (stricter than blink) */
+  /** True when avgEAR < openEyeBaseline * 0.72 — intentional closure tracking */
   isEyesClosed: boolean;
   /** How long eyes have been continuously closed (ms); 0 if open */
   closedDurationMs: number;
   headPose: HeadPoseProxy;
-  featureVector: number[];   // [1, lx, ly, rx, ry, hx, hy, ...] for polynomial regression
+  featureVector: number[];   // [1, gazeX, gazeY, headPose.noseTipX, headPose.noseTipY]
 }
 
 export interface CalibrationTarget {
@@ -71,11 +77,22 @@ export interface CalibrationSample {
   timestamp: number;
 }
 
+export interface GridAnchor {
+  targetId: number;
+  row: number; // 0, 1, 2
+  col: number; // 0, 1, 2
+  targetScreenX: number;
+  targetScreenY: number;
+  medianGazeX: number;
+  medianGazeY: number;
+}
+
 export interface CalibrationModelData {
   weightsX: number[];
   weightsY: number[];
   trainedAt: string;
   featureDim: number;
+  anchors?: GridAnchor[]; // 9 anchors for Piecewise 3x3 Bilinear + Ridge Hybrid
   report: CalibrationReport;
 }
 
@@ -123,6 +140,10 @@ export interface DwellSettings {
   blinkCooldownMs: number;
   /** Front-facing webcam mirror toggle */
   mirrorX?: boolean;
+  /** Cell-snap capture radius in pixels (default 90) */
+  snapRadiusPx?: number;
+  /** Whether magnetic cell snapping to [data-dwell="true"] centers is enabled */
+  enableCellSnap?: boolean;
 }
 
 export interface DwellState {
@@ -134,6 +155,10 @@ export interface DwellState {
   blinkProgress: number;
   /** True while eyes are closed and blink-hold is building */
   isBlinkHolding: boolean;
+  /** Snapped screen coordinates when locked to target center */
+  snappedX?: number;
+  snappedY?: number;
+  isSnapped?: boolean;
 }
 
 export interface CursorSpeedPreset {

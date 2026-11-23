@@ -161,7 +161,7 @@ export default function GazeProvider({ children }: { children: React.ReactNode }
         finalX = filtered.x;
         finalY = filtered.y;
 
-        // Process dwell selection
+        // Process dwell selection with discrete cell snapping
         dwellState = dwellEngineRef.current.update(
           finalX,
           finalY,
@@ -172,6 +172,12 @@ export default function GazeProvider({ children }: { children: React.ReactNode }
             avgEAR: features.averageEAR,
           }
         );
+
+        // If cell-snapped to a target button center, guide cursor to that center
+        if (dwellState.isSnapped && dwellState.snappedX !== undefined && dwellState.snappedY !== undefined) {
+          finalX = dwellState.snappedX;
+          finalY = dwellState.snappedY;
+        }
       } else {
         // Uncalibrated: Firmly park cursor at screen center. Never dwell-click background buttons!
         finalX = screenW / 2;
