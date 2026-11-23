@@ -2,7 +2,7 @@
 
 import React, { useRef, useEffect, useState, useCallback } from "react";
 import { getFaceLandmarker, extractEyeFeatures } from "@/lib/gaze/featureExtractor";
-import { EyeFeatures, TrackingStatus } from "@/lib/gaze/types";
+import { EyeFeatures, TrackingStatus, HeadAlignment } from "@/lib/gaze/types";
 import { AlertCircle, RefreshCw, RotateCw } from "lucide-react";
 
 interface WebcamTrackerProps {
@@ -34,6 +34,7 @@ export default function WebcamTracker({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [currentStatus, setCurrentStatus] = useState<TrackingStatus>("off");
   const [retryCount, setRetryCount] = useState<number>(0);
+  const [alignment, setAlignment] = useState<HeadAlignment | null>(null);
 
   // updateStatus is stable — it never reads from props, only sets local state and calls ref
   const updateStatus = useCallback((newStatus: TrackingStatus) => {
@@ -171,6 +172,9 @@ export default function WebcamTracker({
               const features = extractEyeFeatures(landmarks, now, blendshapeCategories);
 
               updateStatus(features.status);
+              if (features.headAlignment) {
+                setAlignment(features.headAlignment);
+              }
               onFeaturesUpdateRef.current?.(features);
 
               // Optional debug mesh overlay
@@ -263,6 +267,9 @@ export default function WebcamTracker({
             } else {
               const emptyFeatures = extractEyeFeatures(null, now);
               updateStatus("no_face");
+              if (emptyFeatures.headAlignment) {
+                setAlignment(emptyFeatures.headAlignment);
+              }
               onFeaturesUpdateRef.current?.(emptyFeatures);
             }
           } catch (detectErr) {
@@ -323,92 +330,151 @@ export default function WebcamTracker({
     <div
       className={
         showPreview
-          ? "relative rounded-xl border border-slate-300 bg-slate-900 overflow-hidden shadow-lg transition-all"
+          ? "relative rounded-xl border border-slate-300 dark:border-slate-800 bg-slate-900 overflow-hidden shadow-xl transition-all flex flex-col"
           : "fixed -top-96 -left-96 w-1 h-1 opacity-0 pointer-events-none"
       }
-      style={showPreview ? { width: 240, height: 180 } : undefined}
+      style={showPreview ? { width: 240 } : undefined}
     >
-      {/* Video element — mirrored with scaleX(-1) to match coordinate system */}
-      <video
-        ref={videoRef}
-        playsInline
-        muted
-        autoPlay
-        controls={false}
-        onLoadedMetadata={() => {
-          videoRef.current?.play().catch(() => {});
-        }}
-        className="absolute inset-0 w-full h-full object-cover"
-        style={{ transform: "scaleX(-1)" }}
-      />
+      <div className="relative w-full" style={showPreview ? { height: 180 } : undefined}>
+        {/* Video element — mirrored with scaleX(-1) to match coordinate system */}
+        <video
+          ref={videoRef}
+          playsInline
+          muted
+          autoPlay
+          controls={false}
+          onLoadedMetadata={() => {
+            videoRef.current?.play().catch(() => {});
+          }}
+          className="absolute inset-0 w-full h-full object-cover"
+          style={{ transform: "scaleX(-1)" }}
+        />
 
-      {/* Debug Canvas overlay — also mirrored with scaleX(-1) */}
-      <canvas
-        ref={canvasRef}
-        width={640}
-        height={480}
-        className="absolute inset-0 w-full h-full pointer-events-none"
-        style={{ transform: "scaleX(-1)" }}
-      />
+        {/* Debug Canvas overlay — also mirrored with scaleX(-1) */}
+        <canvas
+          ref={canvasRef}
+          width={640}
+          height={480}
+          className="absolute inset-0 w-full h-full pointer-events-none"
+          style={{ transform: "scaleX(-1)" }}
+        />
 
-      {/* Loading overlay */}
-      {isLoading && (
-        <div className="absolute inset-0 bg-slate-900/85 flex flex-col items-center justify-center p-3 text-center z-20">
-          <RefreshCw className="w-6 h-6 text-teal-400 animate-spin mb-2" />
-          <span className="text-[11px] font-bold text-slate-200 leading-tight">{loadingStage}</span>
-          <span className="text-[9px] text-slate-400 mt-1">100% In-Browser · Privacy Protected</span>
-        </div>
-      )}
+        {/* Live Face Guide Oval */}
+        {!isLoading && !errorMessage && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-10">
+            <div
+              className={`w-[124px] h-[148px] rounded-[50%] border-2 transition-all duration-200 flex flex-col items-center justify-start pt-1.5 ${
+                alignment?.isOptimal
+                  ? "border-emerald-500 bg-emerald-500/10 shadow-[0_0_18px_rgba(16,185,129,0.5)]"
+                  : alignment?.distanceStatus.includes("Too Close") || alignment?.distanceStatus.includes("Too Far")
+                  ? "border-amber-400 bg-amber-500/10 shadow-[0_0_14px_rgba(245,158,11,0.4)]"
+                  : alignment?.centerStatus !== "Centered"
+                  ? "border-rose-500 bg-rose-500/10 shadow-[0_0_14px_rgba(239,68,68,0.4)]"
+                  : "border-slate-400/40 bg-slate-900/10"
+              }`}
+            >
+              <span
+                className={`px-1.5 py-0.5 rounded text-[8px] font-black tracking-tight uppercase shadow ${
+                  alignment?.isOptimal
+                    ? "bg-emerald-600 text-white"
+                    : alignment?.distanceStatus.includes("Too Close") || alignment?.distanceStatus.includes("Too Far")
+                    ? "bg-amber-600 text-white"
+                    : "bg-rose-600 text-white"
+                }`}
+              >
+                {alignment?.guidanceMessage || "Align Face"}
+              </span>
+            </div>
+          </div>
+        )}
 
-      {/* Error state with retry button */}
-      {errorMessage && (
-        <div className="absolute inset-0 bg-red-950/90 flex flex-col items-center justify-center p-3 text-center z-20">
-          <AlertCircle className="w-5 h-5 text-red-400 mb-1" />
-          <span className="text-[11px] font-bold text-red-200">Camera Access Error</span>
-          <p className="text-[9px] text-red-300 mt-1 leading-tight">{errorMessage}</p>
-          <button
-            type="button"
-            onClick={() => setRetryCount((c) => c + 1)}
-            className="mt-2 px-2.5 py-1 rounded bg-red-800 hover:bg-red-700 text-white text-[10px] font-bold flex items-center gap-1 transition-all"
-          >
-            <RotateCw className="w-3 h-3" />
-            <span>Retry Camera</span>
-          </button>
-        </div>
-      )}
+        {/* Loading overlay */}
+        {isLoading && (
+          <div className="absolute inset-0 bg-slate-900/85 flex flex-col items-center justify-center p-3 text-center z-20">
+            <RefreshCw className="w-6 h-6 text-teal-400 animate-spin mb-2" />
+            <span className="text-[11px] font-bold text-slate-200 leading-tight">{loadingStage}</span>
+            <span className="text-[9px] text-slate-400 mt-1">100% In-Browser · Privacy Protected</span>
+          </div>
+        )}
 
-      {/* Status indicator pill */}
-      {!isLoading && !errorMessage && (
-        <div className="absolute bottom-1.5 left-1.5 px-2 py-0.5 rounded text-[10px] font-bold bg-black/70 backdrop-blur text-white flex items-center gap-1.5 z-10">
-          <span
-            className={`w-2 h-2 rounded-full flex-shrink-0 ${
-              currentStatus === "ready"
-                ? "bg-emerald-400 animate-pulse"
+        {/* Error state with retry button */}
+        {errorMessage && (
+          <div className="absolute inset-0 bg-red-950/90 flex flex-col items-center justify-center p-3 text-center z-20">
+            <AlertCircle className="w-5 h-5 text-red-400 mb-1" />
+            <span className="text-[11px] font-bold text-red-200">Camera Access Error</span>
+            <p className="text-[9px] text-red-300 mt-1 leading-tight">{errorMessage}</p>
+            <button
+              type="button"
+              onClick={() => setRetryCount((c) => c + 1)}
+              className="mt-2 px-2.5 py-1 rounded bg-red-800 hover:bg-red-700 text-white text-[10px] font-bold flex items-center gap-1 transition-all"
+            >
+              <RotateCw className="w-3 h-3" />
+              <span>Retry Camera</span>
+            </button>
+          </div>
+        )}
+
+        {/* Status indicator pill */}
+        {!isLoading && !errorMessage && (
+          <div className="absolute bottom-1.5 left-1.5 px-2 py-0.5 rounded text-[10px] font-bold bg-black/70 backdrop-blur text-white flex items-center gap-1.5 z-10">
+            <span
+              className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                currentStatus === "ready"
+                  ? "bg-emerald-400 animate-pulse"
+                  : currentStatus === "blink_ignored"
+                  ? "bg-amber-400"
+                  : currentStatus === "no_face"
+                  ? "bg-orange-400"
+                  : "bg-red-400"
+              }`}
+            />
+            <span>
+              {currentStatus === "ready"
+                ? "Face Detected"
                 : currentStatus === "blink_ignored"
-                ? "bg-amber-400"
+                ? "Blink Ignored"
                 : currentStatus === "no_face"
-                ? "bg-orange-400"
-                : "bg-red-400"
-            }`}
-          />
-          <span>
-            {currentStatus === "ready"
-              ? "Face Detected"
-              : currentStatus === "blink_ignored"
-              ? "Blink Ignored"
-              : currentStatus === "no_face"
-              ? "No Face"
-              : currentStatus === "error"
-              ? "Error"
-              : "Starting..."}
-          </span>
-        </div>
-      )}
+                ? "No Face"
+                : currentStatus === "error"
+                ? "Error"
+                : "Starting..."}
+            </span>
+          </div>
+        )}
 
-      {/* LIVE indicator */}
-      {!isLoading && !errorMessage && (
-        <div className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded text-[9px] font-black bg-red-600 text-white z-10 tracking-wider">
-          LIVE
+        {/* LIVE indicator */}
+        {!isLoading && !errorMessage && (
+          <div className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded text-[9px] font-black bg-red-600 text-white z-10 tracking-wider">
+            LIVE
+          </div>
+        )}
+      </div>
+
+      {/* Compact Distance / Center Indicator Bar below video */}
+      {showPreview && !isLoading && !errorMessage && (
+        <div className="w-full bg-slate-950 border-t border-slate-800 px-2 py-1.5 flex items-center justify-between text-[10px] font-bold text-slate-300">
+          <div className="flex items-center gap-1.5">
+            <span
+              className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                alignment?.distanceStatus.includes("Good")
+                  ? "bg-emerald-400"
+                  : "bg-amber-400 animate-pulse"
+              }`}
+            />
+            <span>
+              {alignment?.distanceStatus.includes("Good")
+                ? "Dist: Optimal (~50cm)"
+                : alignment?.distanceStatus.split("—")[0].trim() || "Distance Checking"}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span
+              className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                alignment?.centerStatus === "Centered" ? "bg-emerald-400" : "bg-rose-400 animate-pulse"
+              }`}
+            />
+            <span>{alignment?.centerStatus || "Centering"}</span>
+          </div>
         </div>
       )}
     </div>

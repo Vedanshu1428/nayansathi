@@ -1,13 +1,26 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { useGaze } from "@/components/gaze/GazeProvider";
-import { GazePoint, TrackingStatus, SelectionMode, CURSOR_SPEED_PRESETS } from "@/lib/gaze/types";
-import { Sliders, FlipHorizontal, AlertCircle, Monitor, MousePointer, Pause } from "lucide-react";
+import { GazePoint, TrackingStatus, SelectionMode, GazeSensitivity } from "@/lib/gaze/types";
+import {
+  FlipHorizontal,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  ChevronDown,
+  Circle,
+  Eye,
+  Sliders,
+  Play,
+  Pause,
+  Sparkles,
+  MousePointer,
+} from "lucide-react";
 
 interface GazeCursorProps {
   gazePoint: GazePoint | null;
-  dwellProgress: number; // 0.0 to 1.0 (throttled fallback)
+  dwellProgress: number;
   isCoolingDown: boolean;
   status: TrackingStatus;
   visible?: boolean;
@@ -22,33 +35,17 @@ interface GazeCursorProps {
   onSelectionModeChange: (mode: SelectionMode) => void;
   blinkHoldMs: number;
   onBlinkHoldMsChange: (ms: number) => void;
-  blinkProgress: number; // 0.0 to 1.0
+  blinkProgress: number;
   isBlinkHolding: boolean;
-  cursorSpeedPresetIndex: number; // 0=Very Slow, 1=Slow/Balanced, 2=Normal
+  cursorSpeedPresetIndex: number;
   onCursorSpeedPresetChange: (index: number) => void;
 }
 
 export default function GazeCursor({
-  gazePoint,
-  dwellProgress: propDwellProgress,
-  isCoolingDown: propIsCoolingDown,
-  status: propStatus,
   visible = true,
   isCalibrated = true,
   mirrorX = true,
   onMirrorXChange,
-  dwellTimeMs,
-  onDwellTimeChange,
-  smoothingBeta,
-  onSmoothingBetaChange,
-  selectionMode,
-  onSelectionModeChange,
-  blinkHoldMs,
-  onBlinkHoldMsChange,
-  blinkProgress: propBlinkProgress,
-  isBlinkHolding: propIsBlinkHolding,
-  cursorSpeedPresetIndex,
-  onCursorSpeedPresetChange,
 }: GazeCursorProps) {
   let gazeCtx: ReturnType<typeof useGaze> | null = null;
   try {
@@ -58,438 +55,250 @@ export default function GazeCursor({
     gazeCtx = null;
   }
 
-  const [showTuning, setShowTuning] = useState(false);
+  // Real-time discrete navigation state from 60 FPS custom event
+  const [direction, setDirection] = useState<"LEFT" | "RIGHT" | "UP" | "DOWN" | "CENTER">("CENTER");
+  const [liveBlinkProgress, setLiveBlinkProgress] = useState<number>(0);
+  const [liveIsHolding, setLiveIsHolding] = useState<boolean>(false);
+  const [focusedLabel, setFocusedLabel] = useState<string>("");
 
-  // Direct DOM references for 60 FPS zero-lag rendering without triggering React re-renders
-  const cursorContainerRef = useRef<HTMLDivElement>(null);
-  const dwellCircleRef = useRef<SVGCircleElement>(null);
-  const blinkCircleRef = useRef<SVGCircleElement>(null);
-  const centerDotRef = useRef<SVGCircleElement>(null);
-  const cooldownBadgeRef = useRef<HTMLDivElement>(null);
-  const blinkBadgeRef = useRef<HTMLDivElement>(null);
-  const holdBadgeRef = useRef<HTMLDivElement>(null);
-
-  const radius = 22;
-  const circumference = 2 * Math.PI * radius;
-  const blinkRadius = 28;
-  const blinkCircumference = 2 * Math.PI * blinkRadius;
-
-  // Listen to the high-frequency 60 FPS custom event for ultra-smooth pointer rendering
   useEffect(() => {
     const handleFrame = (e: Event) => {
       const customEvent = e as CustomEvent<{
-        x: number;
-        y: number;
-        rawX: number;
-        rawY: number;
-        dwellProgress: number;
-        blinkProgress: number;
-        isBlinkHolding: boolean;
-        isCoolingDown: boolean;
-        status: TrackingStatus;
-        isCalibrated: boolean;
+        discreteDirection?: "LEFT" | "RIGHT" | "UP" | "DOWN" | "CENTER";
+        blinkProgress?: number;
+        isBlinkHolding?: boolean;
+        focusedText?: string;
       }>;
-      const detail = customEvent.detail;
-      if (!detail) return;
+      const d = customEvent.detail;
+      if (!d) return;
 
-      // 1. Position cursor via hardware-accelerated translate3d
-      if (cursorContainerRef.current) {
-        cursorContainerRef.current.style.transform = `translate3d(${detail.x}px, ${detail.y}px, 0) translate(-50%, -50%)`;
-      }
-
-      // 2. Update Dwell stroke progress
-      if (dwellCircleRef.current) {
-        if (detail.isCalibrated) {
-          const offset = circumference * (1 - Math.max(0, Math.min(1, detail.dwellProgress)));
-          dwellCircleRef.current.style.strokeDashoffset = `${offset}`;
-          dwellCircleRef.current.style.fill =
-            detail.dwellProgress > 0.95
-              ? detail.isCoolingDown
-                ? "#3B82F6"
-                : "#0D9488"
-              : "rgba(255, 255, 255, 0.4)";
-        } else {
-          dwellCircleRef.current.style.strokeDashoffset = `${circumference}`;
-        }
-      }
-
-      // 3. Update Blink-hold progress ring
-      if (blinkCircleRef.current) {
-        if (detail.isBlinkHolding && detail.isCalibrated) {
-          blinkCircleRef.current.style.display = "block";
-          const bOffset = blinkCircumference * (1 - Math.max(0, Math.min(1, detail.blinkProgress)));
-          blinkCircleRef.current.style.strokeDashoffset = `${bOffset}`;
-        } else {
-          blinkCircleRef.current.style.display = "none";
-        }
-      }
-
-      // 4. Update badge visibility directly on the DOM
-      if (cooldownBadgeRef.current) {
-        cooldownBadgeRef.current.style.display =
-          detail.isCalibrated && detail.isCoolingDown ? "block" : "none";
-      }
-      if (holdBadgeRef.current) {
-        holdBadgeRef.current.style.display =
-          detail.isCalibrated && detail.isBlinkHolding ? "block" : "none";
-      }
-      if (blinkBadgeRef.current) {
-        blinkBadgeRef.current.style.display =
-          detail.isCalibrated && detail.status === "blink_ignored" && !detail.isBlinkHolding
-            ? "block"
-            : "none";
-      }
+      if (d.discreteDirection) setDirection(d.discreteDirection);
+      if (typeof d.blinkProgress === "number") setLiveBlinkProgress(d.blinkProgress);
+      if (typeof d.isBlinkHolding === "boolean") setLiveIsHolding(d.isBlinkHolding);
+      if (d.focusedText !== undefined) setFocusedLabel(d.focusedText);
     };
 
     window.addEventListener("gazeconnect_frame", handleFrame);
-    return () => {
-      window.removeEventListener("gazeconnect_frame", handleFrame);
-    };
-  }, [circumference, blinkCircumference]);
+    return () => window.removeEventListener("gazeconnect_frame", handleFrame);
+  }, []);
 
   if (!visible) return null;
 
-  // Fallback initial position
-  const initialX = gazePoint ? gazePoint.x : typeof window !== "undefined" ? window.innerWidth / 2 : 500;
-  const initialY = gazePoint ? gazePoint.y : typeof window !== "undefined" ? window.innerHeight / 2 : 500;
+  const currentSens: GazeSensitivity = gazeCtx?.sensitivity ?? "medium";
+  const isAutoScanning = gazeCtx?.isAutoScanning ?? false;
 
-  // Status-based colors for static markup
-  const cursorColor = !isCalibrated
-    ? "#DC2626"
-    : propStatus === "ready"
-    ? propBlinkProgress >= 1.0
-      ? "#22C55E"
-      : propIsCoolingDown
-      ? "#3B82F6"
-      : "#0D9488"
-    : propStatus === "blink_ignored"
-    ? "#F59E0B"
-    : "#EF4444";
+  const handleSensitivityCycle = () => {
+    if (!gazeCtx) return;
+    const next: GazeSensitivity =
+      currentSens === "low" ? "medium" : currentSens === "medium" ? "high" : "low";
+    gazeCtx.setSensitivity(next);
+  };
 
-  const pillLabel =
-    selectionMode === "hold_blink"
-      ? "Blink-Hold"
-      : selectionMode === "slow_dwell"
-      ? "Slow Dwell"
-      : "Hybrid";
+  const handleAutoScanToggle = () => {
+    if (!gazeCtx) return;
+    gazeCtx.setIsAutoScanning(!isAutoScanning);
+  };
+
+  const handleOpenNeutralCalib = () => {
+    if (gazeCtx?.openCalibrationModal) {
+      gazeCtx.openCalibrationModal();
+    } else if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("gazeconnect_open_calibration"));
+    }
+  };
 
   return (
     <>
-      {/* Floating Gaze Cursor Ring — Decoupled via Direct Ref + Hardware Transform */}
-      <div
-        ref={cursorContainerRef}
-        className="fixed top-0 left-0 pointer-events-none z-[9999]"
-        style={{
-          transform: `translate3d(${initialX}px, ${initialY}px, 0) translate(-50%, -50%)`,
-          willChange: "transform",
-        }}
-      >
-        <svg width="60" height="60" viewBox="0 0 60 60" className="overflow-visible pointer-events-none">
-          {/* Background circle */}
-          <circle
-            cx="30"
-            cy="30"
-            r={radius}
-            fill="none"
-            stroke="rgba(0, 0, 0, 0.25)"
-            strokeWidth="5"
-          />
-
-          {/* Blink-hold progress ring (amber, behind main ring) */}
-          <circle
-            ref={blinkCircleRef}
-            cx="30"
-            cy="30"
-            r={blinkRadius}
-            fill="none"
-            stroke="#F59E0B"
-            strokeWidth="4"
-            strokeDasharray={blinkCircumference}
-            strokeDashoffset={blinkCircumference * (1 - propBlinkProgress)}
-            strokeLinecap="round"
-            transform="rotate(-90 30 30)"
-            style={{ display: propIsBlinkHolding && isCalibrated ? "block" : "none" }}
-          />
-
-          {/* Dwell Progress Ring */}
-          <circle
-            ref={dwellCircleRef}
-            cx="30"
-            cy="30"
-            r={radius}
-            fill={propDwellProgress > 0.95 ? cursorColor : "rgba(255, 255, 255, 0.4)"}
-            stroke={cursorColor}
-            strokeWidth="5"
-            strokeDasharray={circumference}
-            strokeDashoffset={isCalibrated ? circumference * (1 - propDwellProgress) : circumference}
-            strokeLinecap="round"
-            transform="rotate(-90 30 30)"
-          />
-
-          {/* Center Point */}
-          <circle
-            ref={centerDotRef}
-            cx="30"
-            cy="30"
-            r={4}
-            fill={cursorColor}
-            stroke="#FFFFFF"
-            strokeWidth="1.5"
-          />
-        </svg>
-
-        {/* Uncalibrated Status Badge — Parked at Center */}
-        {!isCalibrated && (
-          <div className="absolute top-14 left-1/2 -translate-x-1/2 bg-red-600 text-white text-[10px] font-black px-2.5 py-1 rounded-full shadow-lg whitespace-nowrap flex items-center gap-1.5 animate-pulse border border-red-300 pointer-events-none">
-            <AlertCircle className="w-3 h-3 text-white" />
-            <span>CALIBRATION REQUIRED</span>
-          </div>
-        )}
-
-        {/* Labels when calibrated */}
-        <div
-          ref={cooldownBadgeRef}
-          style={{ display: isCalibrated && propIsCoolingDown ? "block" : "none" }}
-          className="absolute top-14 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded shadow whitespace-nowrap pointer-events-none"
-        >
-          COOLDOWN
-        </div>
-
-        <div
-          ref={blinkBadgeRef}
-          style={{
-            display:
-              isCalibrated && propStatus === "blink_ignored" && !propIsBlinkHolding ? "block" : "none",
-          }}
-          className="absolute top-14 left-1/2 -translate-x-1/2 bg-amber-500 text-black text-[9px] font-bold px-1.5 py-0.5 rounded shadow whitespace-nowrap pointer-events-none"
-        >
-          BLINK
-        </div>
-
-        <div
-          ref={holdBadgeRef}
-          style={{ display: isCalibrated && propIsBlinkHolding ? "block" : "none" }}
-          className="absolute top-14 left-1/2 -translate-x-1/2 bg-amber-500 text-black text-[9px] font-bold px-1.5 py-0.5 rounded shadow whitespace-nowrap pointer-events-none"
-        >
-          HOLD
-        </div>
-      </div>
-
-      {/* Compact Floating Tuning Pill — Interactive with pointer-events-auto */}
-      <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-2 pointer-events-auto">
-        {/* Floating OS Desktop Control Status & Quick Click Selector */}
+      {/* ── Fixed Bottom Eye-Navigation HUD Pill ── */}
+      <aside aria-label="Gaze Navigation Bar" className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 pointer-events-auto flex flex-col items-center gap-2 max-w-[95vw]">
+        {/* Floating OS Control Status (if active) */}
         {gazeCtx?.isOSControlActive && (
-          <div className="p-3 rounded-2xl bg-slate-900/95 text-white border border-indigo-500 shadow-2xl backdrop-blur-md text-xs space-y-2 w-72 animate-in fade-in slide-in-from-bottom-2">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
-              <span className="font-bold flex items-center gap-1.5 text-indigo-300">
-                <Monitor className="w-3.5 h-3.5 text-indigo-400" />
-                <span>OS Desktop Control</span>
-              </span>
-              <button
-                type="button"
-                data-dwell="true"
-                onClick={() => gazeCtx?.setIsOSControlActive(false)}
-                className="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-700 text-white font-bold text-[10px] flex items-center gap-1"
-                title="Pause OS desktop cursor stream"
-              >
-                <Pause className="w-3 h-3" />
-                <span>Pause</span>
-              </button>
-            </div>
-
-            <div className="text-[10px] text-slate-300 font-mono truncate">
-              Status: <span className="text-emerald-400">{gazeCtx.osStatusMessage}</span>
-            </div>
-
-            {/* Quick Click-Type Selector */}
-            <div className="flex gap-1.5 pt-1">
-              {(["left", "double", "right"] as const).map((type) => (
+          <div className="px-3.5 py-1.5 rounded-full bg-slate-900/90 border border-teal-500/50 text-white text-[11px] font-bold shadow-xl flex items-center gap-3 backdrop-blur">
+            <span className="flex items-center gap-1.5 text-teal-400">
+              <MousePointer className="w-3.5 h-3.5 animate-pulse" />
+              <span>OS Control Active</span>
+            </span>
+            <div className="flex gap-1">
+              {(["left", "double", "right"] as const).map((mode) => (
                 <button
-                  key={type}
+                  key={mode}
                   type="button"
                   data-dwell="true"
-                  onClick={() => gazeCtx?.setOSClickType(type)}
-                  className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold border transition-all ${
-                    gazeCtx?.osClickType === type
-                      ? "bg-indigo-600 text-white border-indigo-400 shadow-sm"
-                      : "bg-slate-800 text-slate-400 border-slate-700 hover:text-white"
+                  onClick={() => gazeCtx?.setOSClickType(mode)}
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase transition-all ${
+                    gazeCtx?.osClickType === mode
+                      ? "bg-teal-600 text-white shadow-sm"
+                      : "bg-slate-800 text-slate-400 hover:text-white"
                   }`}
                 >
-                  {type === "left" ? "Left Click" : type === "double" ? "Double" : "Right Click"}
+                  {mode}
                 </button>
               ))}
             </div>
+            <button
+              type="button"
+              data-dwell="true"
+              onClick={() => gazeCtx?.setIsOSControlActive(false)}
+              className="p-1 rounded bg-slate-800 hover:bg-rose-900 text-slate-300 hover:text-white"
+              title="Pause OS Eye Control"
+            >
+              <Pause className="w-3 h-3" />
+            </button>
           </div>
         )}
 
-        {showTuning && (
-          <div className="p-4 rounded-2xl bg-white/95 backdrop-blur-md border border-slate-200 shadow-xl w-72 text-xs space-y-4">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-              <span className="font-bold text-slate-800 flex items-center gap-1.5">
-                <Sliders className="w-4 h-4 text-teal-600" />
-                Tune Gaze ({pillLabel})
-              </span>
-              <button
-                type="button"
-                onClick={() => setShowTuning(false)}
-                className="text-slate-400 hover:text-slate-700 font-bold"
-              >
-                ✕
-              </button>
-            </div>
+        {/* Primary Eye-Navigation HUD Pill */}
+        <div className="bg-slate-900/95 dark:bg-slate-950/95 border border-slate-700/80 text-white rounded-2xl sm:rounded-full px-4 sm:px-5 py-2.5 shadow-2xl backdrop-blur-md flex flex-wrap items-center justify-center gap-3 sm:gap-4 text-xs font-bold">
+          {/* 1. Live 4-Direction Indicator Cluster */}
+          <div className="flex items-center gap-1.5 bg-slate-800/80 px-2.5 py-1 rounded-xl border border-slate-700/60">
+            <span
+              className={`p-1 rounded transition-all ${
+                direction === "LEFT"
+                  ? "bg-teal-500 text-white scale-110 shadow-[0_0_12px_rgba(20,184,166,0.8)]"
+                  : "text-slate-500"
+              }`}
+              title="Gaze Left"
+            >
+              <ChevronLeft className="w-4 h-4 stroke-[3]" />
+            </span>
 
-            {/* Section 0 — Camera Mirror X */}
-            <div className="space-y-1.5">
-              <div className="font-semibold text-slate-700 text-[11px] uppercase tracking-wide flex items-center gap-1">
-                <FlipHorizontal className="w-3.5 h-3.5 text-teal-600" />
-                <span>Camera Direction</span>
-              </div>
-              <button
-                type="button"
-                data-dwell="true"
-                onClick={() => onMirrorXChange?.(!mirrorX)}
-                className={`w-full py-2 px-3 rounded-lg text-xs font-bold border transition-all text-left flex items-center justify-between ${
-                  mirrorX
-                    ? "bg-teal-50 border-teal-500 text-teal-900"
-                    : "bg-slate-50 border-slate-300 text-slate-700"
+            <div className="flex flex-col items-center -my-1">
+              <span
+                className={`p-0.5 rounded transition-all ${
+                  direction === "UP"
+                    ? "bg-teal-500 text-white scale-110 shadow-[0_0_12px_rgba(20,184,166,0.8)]"
+                    : "text-slate-500"
                 }`}
+                title="Gaze Up"
               >
-                <span>{mirrorX ? "Mirror X: ON (Front Webcam)" : "Mirror X: OFF (Unmirrored)"}</span>
-                <span className="text-[10px] font-mono text-teal-700 underline">Flip</span>
-              </button>
+                <ChevronUp className="w-3.5 h-3.5 stroke-[3]" />
+              </span>
+              <span
+                className={`p-0.5 rounded transition-all ${
+                  direction === "CENTER"
+                    ? "text-teal-400 scale-125"
+                    : "text-slate-600"
+                }`}
+                title="Neutral Center"
+              >
+                <Circle className="w-2.5 h-2.5 fill-current" />
+              </span>
+              <span
+                className={`p-0.5 rounded transition-all ${
+                  direction === "DOWN"
+                    ? "bg-teal-500 text-white scale-110 shadow-[0_0_12px_rgba(20,184,166,0.8)]"
+                    : "text-slate-500"
+                }`}
+                title="Gaze Down"
+              >
+                <ChevronDown className="w-3.5 h-3.5 stroke-[3]" />
+              </span>
             </div>
 
-            {/* Section 1 — Trigger Mode */}
-            <div className="space-y-1.5">
-              <div className="font-semibold text-slate-700 text-[11px] uppercase tracking-wide">Trigger Mode</div>
-              <div className="flex gap-2">
-                {(["hold_blink", "slow_dwell", "hybrid"] as SelectionMode[]).map((m) => (
-                  <button
-                    key={m}
-                    data-dwell="true"
-                    onClick={() => onSelectionModeChange(m)}
-                    className={`flex-1 py-2 rounded-lg text-[11px] font-bold border transition-all ${
-                      selectionMode === m
-                        ? "bg-teal-600 text-white border-teal-600 shadow-sm"
-                        : "border-slate-300 text-slate-600"
-                    }`}
-                  >
-                    {m === "hold_blink" ? "Hold-Blink" : m === "slow_dwell" ? "Slow Dwell" : "Hybrid"}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <span
+              className={`p-1 rounded transition-all ${
+                direction === "RIGHT"
+                  ? "bg-teal-500 text-white scale-110 shadow-[0_0_12px_rgba(20,184,166,0.8)]"
+                  : "text-slate-500"
+              }`}
+              title="Gaze Right"
+            >
+              <ChevronRight className="w-4 h-4 stroke-[3]" />
+            </span>
 
-            {/* Section 2 — Cursor Speed */}
-            <div className="space-y-1.5">
-              <div className="font-semibold text-slate-700 text-[11px] uppercase tracking-wide">Cursor Speed</div>
-              <div className="flex gap-2">
-                {CURSOR_SPEED_PRESETS.map((p, i) => (
-                  <button
-                    key={i}
-                    data-dwell="true"
-                    onClick={() => onCursorSpeedPresetChange(i)}
-                    className={`flex-1 py-2 rounded-lg text-[10px] font-bold border transition-all ${
-                      cursorSpeedPresetIndex === i
-                        ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
-                        : "border-slate-300 text-slate-600"
-                    }`}
-                  >
-                    {i === 0 ? "Very Slow" : i === 1 ? "Balanced" : "Normal"}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Section 3 — Time Sliders */}
-            <div className="space-y-3">
-              <div className="font-semibold text-slate-700 text-[11px] uppercase tracking-wide">Timing</div>
-
-              {/* Hold-Blink Time slider */}
-              {(selectionMode === "hold_blink" || selectionMode === "hybrid") && (
-                <div>
-                  <div className="flex justify-between font-semibold text-slate-700 mb-1">
-                    <span>Hold-Blink Time</span>
-                    <span className="text-teal-600 font-bold">{blinkHoldMs} ms</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="350"
-                    max="900"
-                    step="25"
-                    value={blinkHoldMs}
-                    onChange={(e) => onBlinkHoldMsChange(Number(e.target.value))}
-                    className="w-full accent-teal-600"
-                  />
-                  <div className="flex justify-between text-[10px] text-slate-400 mt-0.5">
-                    <span>Quick (350ms)</span>
-                    <span>Long (900ms)</span>
-                  </div>
-                </div>
-              )}
-
-              {/* Dwell Time slider */}
-              {(selectionMode === "slow_dwell" || selectionMode === "hybrid") && (
-                <div>
-                  <div className="flex justify-between font-semibold text-slate-700 mb-1">
-                    <span>Dwell Time</span>
-                    <span className="text-teal-600 font-bold">{dwellTimeMs} ms</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="1000"
-                    max="3000"
-                    step="100"
-                    value={dwellTimeMs}
-                    onChange={(e) => onDwellTimeChange(Number(e.target.value))}
-                    className="w-full accent-teal-600"
-                  />
-                  <div className="flex justify-between text-[10px] text-slate-400 mt-0.5">
-                    <span>Fast (1000ms)</span>
-                    <span>Relaxed (3000ms)</span>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Advanced Beta */}
-            <details className="text-[10px] text-slate-400">
-              <summary className="cursor-pointer select-none">Advanced</summary>
-              <div className="mt-2">
-                <div className="flex justify-between font-semibold text-slate-600 mb-1">
-                  <span>Cursor Smoothing (Beta)</span>
-                  <span className="text-teal-600 font-bold">{smoothingBeta.toFixed(3)}</span>
-                </div>
-                <input
-                  type="range"
-                  min="0.001"
-                  max="0.050"
-                  step="0.001"
-                  value={smoothingBeta}
-                  onChange={(e) => onSmoothingBetaChange(Number(e.target.value))}
-                  className="w-full accent-teal-600"
-                />
-                <div className="flex justify-between text-[10px] text-slate-400 mt-0.5">
-                  <span>Steadier</span>
-                  <span>More Responsive</span>
-                </div>
-              </div>
-            </details>
+            <span className="text-[10px] font-mono font-black text-teal-400 ml-1">
+              {direction}
+            </span>
           </div>
-        )}
 
-        <button
-          type="button"
-          data-dwell="true"
-          onClick={() => setShowTuning(!showTuning)}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-white/90 hover:bg-white text-slate-700 border border-slate-200 shadow-md backdrop-blur transition-all"
-          title="Tune Gaze Settings"
-        >
-          <Sliders className="w-3.5 h-3.5 text-teal-600" />
-          <span>Tune Gaze ({pillLabel})</span>
-        </button>
-      </div>
+          {/* 2. Hold-Blink Click Progress Meter */}
+          <div className="flex items-center gap-2 bg-slate-800/80 px-2.5 py-1 rounded-xl border border-slate-700/60">
+            <Eye className={`w-3.5 h-3.5 ${liveIsHolding ? "text-amber-400 animate-pulse" : "text-slate-400"}`} />
+            <div className="flex flex-col">
+              <div className="flex items-center justify-between text-[9px] gap-2">
+                <span className="text-slate-400 uppercase font-black">Blink Click</span>
+                <span className={`font-mono ${liveBlinkProgress >= 1 ? "text-emerald-400 font-black" : "text-amber-300"}`}>
+                  {Math.round(liveBlinkProgress * 100)}%
+                </span>
+              </div>
+              <div className="w-20 bg-slate-700 rounded-full h-1.5 overflow-hidden mt-0.5">
+                <div
+                  className={`h-full transition-all duration-75 ${
+                    liveBlinkProgress >= 1.0 ? "bg-emerald-400" : "bg-amber-400"
+                  }`}
+                  style={{ width: `${Math.min(100, liveBlinkProgress * 100)}%` }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* 3. Action: Set Neutral Center (3s) */}
+          <button
+            type="button"
+            data-dwell="true"
+            onClick={handleOpenNeutralCalib}
+            className="px-3 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-[11px] font-black shadow-md shadow-teal-600/30 transition-all flex items-center gap-1.5 active:scale-95"
+            title="Calibrate forward eye position in 3 seconds"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Set Neutral (3s)</span>
+          </button>
+
+          {/* 4. Action: Sensitivity Selector */}
+          <button
+            type="button"
+            data-dwell="true"
+            onClick={handleSensitivityCycle}
+            className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-bold text-slate-200 transition-all flex items-center gap-1"
+            title="Cycle Sensitivity: Low / Medium / High"
+          >
+            <Sliders className="w-3 h-3 text-teal-400" />
+            <span>Sens: <strong className="text-teal-400 uppercase">{currentSens}</strong></span>
+          </button>
+
+          {/* 5. Action: Flip Left/Right Toggle */}
+          <button
+            type="button"
+            data-dwell="true"
+            onClick={() => onMirrorXChange?.(!mirrorX)}
+            className={`px-2.5 py-1.5 rounded-xl border text-[11px] font-bold transition-all flex items-center gap-1 ${
+              mirrorX
+                ? "bg-slate-800 border-teal-500/50 text-teal-300"
+                : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+            }`}
+            title="Toggle Left/Right horizontal camera flip"
+          >
+            <FlipHorizontal className="w-3.5 h-3.5" />
+            <span>{mirrorX ? "Flip: ON" : "Flip: OFF"}</span>
+          </button>
+
+          {/* 6. Action: Auto-Scan Mode Toggle */}
+          <button
+            type="button"
+            data-dwell="true"
+            onClick={handleAutoScanToggle}
+            className={`px-2.5 py-1.5 rounded-xl border text-[11px] font-bold transition-all flex items-center gap-1.5 ${
+              isAutoScanning
+                ? "bg-emerald-600 border-emerald-500 text-white animate-pulse shadow-md shadow-emerald-600/40"
+                : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+            }`}
+            title="Automatically advance through buttons every 1.8s (Blink to Click)"
+          >
+            {isAutoScanning ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+            <span>{isAutoScanning ? "Auto-Scan (1.8s)" : "Auto-Scan"}</span>
+          </button>
+
+          {/* Active button indicator badge (if any) */}
+          {focusedLabel && (
+            <div className="hidden lg:flex items-center gap-1 text-[10px] text-slate-400 border-l border-slate-700 pl-3">
+              <span>Target:</span>
+              <span className="text-teal-300 font-mono font-bold max-w-[100px] truncate">
+                {focusedLabel}
+              </span>
+            </div>
+          )}
+        </div>
+      </aside>
     </>
   );
 }

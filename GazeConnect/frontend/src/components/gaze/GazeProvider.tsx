@@ -8,13 +8,17 @@ import {
   SelectionMode,
   CURSOR_SPEED_PRESETS,
   DwellState,
+  DiscreteDirection,
+  GazeSensitivity,
+  GAZE_SENSITIVITY_THRESHOLDS,
 } from "@/lib/gaze/types";
 import { loadCalibrationModel, predictGaze } from "@/lib/gaze/calibrationModel";
-import { setMirrorX as setFeatureExtractorMirrorX } from "@/lib/gaze/featureExtractor";
+import { setMirrorX as setFeatureExtractorMirrorX, getNeutralGazeBaseline } from "@/lib/gaze/featureExtractor";
 import { OneEuroFilter2D } from "@/lib/gaze/oneEuroFilter";
 import { DwellEngine } from "@/lib/gaze/dwellEngine";
 import WebcamTracker from "@/components/gaze/WebcamTracker";
 import GazeCursor from "@/components/gaze/GazeCursor";
+import CalibrationModal from "@/components/gaze/CalibrationModal";
 
 interface GazeContextValue {
   latestEyeFeatures: EyeFeatures | null;
@@ -47,6 +51,16 @@ interface GazeContextValue {
   setShowCameraPreview: (v: boolean) => void;
   showLandmarksDebug: boolean;
   setShowLandmarksDebug: (v: boolean) => void;
+  // 4-Directional Discrete Eye-Navigation System
+  discreteDirection: DiscreteDirection;
+  deltaGazeX: number;
+  deltaGazeY: number;
+  sensitivity: GazeSensitivity;
+  setSensitivity: (s: GazeSensitivity) => void;
+  isAutoScanning: boolean;
+  setIsAutoScanning: (v: boolean) => void;
+  openCalibrationModal: () => void;
+  focusedElementText: string;
   // System-wide OS Desktop Control Bridge
   isOSControlActive: boolean;
   setIsOSControlActive: (active: boolean) => void;
@@ -87,6 +101,32 @@ export default function GazeProvider({ children }: { children: React.ReactNode }
   const [isOSControlActive, setIsOSControlActive] = useState<boolean>(false);
   const [osClickType, setOSClickType] = useState<"left" | "double" | "right">("left");
   const [osStatusMessage, setOSStatusMessage] = useState<string>("Disconnected");
+
+  // 4-Directional Discrete Eye-Navigation State
+  const [discreteDirection, setDiscreteDirection] = useState<DiscreteDirection>("CENTER");
+  const [deltaGazeX, setDeltaGazeX] = useState<number>(0);
+  const [deltaGazeY, setDeltaGazeY] = useState<number>(0);
+  const [sensitivity, setSensitivityState] = useState<GazeSensitivity>("medium");
+  const [isAutoScanning, setIsAutoScanningState] = useState<boolean>(false);
+  const [isCalibrationModalOpen, setIsCalibrationModalOpen] = useState<boolean>(false);
+  const [focusedElementText, setFocusedElementText] = useState<string>("");
+
+  const setSensitivity = useCallback((s: GazeSensitivity) => {
+    setSensitivityState(s);
+    dwellEngineRef.current.setSensitivity(s);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("gazeconnect_sensitivity", s);
+    }
+  }, []);
+
+  const setIsAutoScanning = useCallback((enabled: boolean) => {
+    setIsAutoScanningState(enabled);
+    dwellEngineRef.current.setAutoScan(enabled);
+  }, []);
+
+  const openCalibrationModal = useCallback(() => {
+    setIsCalibrationModalOpen(true);
+  }, []);
 
   const osWebSocketRef = useRef<WebSocket | null>(null);
   const lastOSMoveSentTime = useRef<number>(0);
@@ -135,7 +175,55 @@ export default function GazeProvider({ children }: { children: React.ReactNode }
         setMirrorXState(val);
         setFeatureExtractorMirrorX(val);
       }
+
+      const savedSens = localStorage.getItem("gazeconnect_sensitivity");
+      if (savedSens === "low" || savedSens === "medium" || savedSens === "high") {
+        setSensitivityState(savedSens);
+        dwellEngineRef.current.setSensitivity(savedSens);
+      }
     }
+  }, []);
+
+  // Inject High-Visibility Focus Ring Stylesheet & Setup Manual Mouseover Sync
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+
+    const styleId = "gazeconnect-discrete-focus-style";
+    if (!document.getElementById(styleId)) {
+      const style = document.createElement("style");
+      style.id = styleId;
+      style.innerHTML = `
+        [data-gaze-focused="true"] {
+          outline: 4px solid #14B8A6 !important;
+          outline-offset: 3px !important;
+          box-shadow: 0 0 25px rgba(20, 184, 166, 0.85), 0 0 50px rgba(20, 184, 166, 0.35) !important;
+          transform: scale(1.04) !important;
+          transition: all 0.12s cubic-bezier(0.4, 0, 0.2, 1) !important;
+          z-index: 40 !important;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    const handleMouseOver = (e: MouseEvent) => {
+      const target = e.target;
+      if (target instanceof HTMLElement) {
+        const dwellBtn = target.closest('[data-dwell="true"]');
+        if (dwellBtn instanceof HTMLElement) {
+          dwellEngineRef.current.setFocusedElement(dwellBtn);
+        }
+      }
+    };
+
+    const handleOpenCalib = () => setIsCalibrationModalOpen(true);
+
+    document.addEventListener("mouseover", handleMouseOver, { passive: true });
+    window.addEventListener("gazeconnect_open_calibration", handleOpenCalib);
+
+    return () => {
+      document.removeEventListener("mouseover", handleMouseOver);
+      window.removeEventListener("gazeconnect_open_calibration", handleOpenCalib);
+    };
   }, []);
 
   // Sync cursor speed preset to filter
@@ -255,6 +343,44 @@ export default function GazeProvider({ children }: { children: React.ReactNode }
         };
       }
 
+      // ── 4-Directional Discrete Step Navigation ──
+      const curSensitivity = dwellEngineRef.current.getSensitivity();
+      const thresholds = GAZE_SENSITIVITY_THRESHOLDS[curSensitivity];
+
+      const curGazeX = features.gazeX ?? 0.5;
+      const curGazeY = features.gazeY ?? 0.5;
+      const neutral = getNeutralGazeBaseline();
+      const deltaX = curGazeX - neutral.x;
+      const deltaY = curGazeY - neutral.y;
+
+      let direction: DiscreteDirection = "CENTER";
+      if (Math.abs(deltaX) > thresholds.x || Math.abs(deltaY) > thresholds.y) {
+        if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+          direction = deltaX < -thresholds.x ? "LEFT" : "RIGHT";
+        } else {
+          direction = deltaY < -thresholds.y ? "UP" : "DOWN";
+        }
+      }
+
+      if (direction !== "CENTER") {
+        dwellEngineRef.current.stepDirection(direction, features.timestamp);
+      }
+
+      // Auto-Scan Step
+      dwellEngineRef.current.stepAutoScan(features.timestamp);
+
+      // Hold-Blink Click on focused element
+      const blinkClickRes = dwellEngineRef.current.processHoldBlinkClick(
+        features.isEyesClosed,
+        features.closedDurationMs,
+        features.timestamp
+      );
+
+      const focusedEl = dwellEngineRef.current.getFocusedElement();
+      const focusedText = focusedEl
+        ? (focusedEl.innerText || focusedEl.getAttribute("aria-label") || "Target").slice(0, 20).trim()
+        : "";
+
       // 1. FAST PATH (60 FPS): Dispatch custom event for direct DOM transform update (bypasses React virtual DOM)
       window.dispatchEvent(
         new CustomEvent("gazeconnect_frame", {
@@ -264,11 +390,17 @@ export default function GazeProvider({ children }: { children: React.ReactNode }
             rawX: raw.x,
             rawY: raw.y,
             dwellProgress: dwellState.dwellProgress,
-            blinkProgress: dwellState.blinkProgress,
-            isBlinkHolding: dwellState.isBlinkHolding,
+            blinkProgress: blinkClickRes.blinkProgress || dwellState.blinkProgress,
+            isBlinkHolding: blinkClickRes.isBlinkHolding || dwellState.isBlinkHolding,
             isCoolingDown: dwellState.isCoolingDown,
             status: features.status,
             isCalibrated: raw.isCalibrated,
+            discreteDirection: direction,
+            deltaX,
+            deltaY,
+            focusedText,
+            isAutoScanning: dwellEngineRef.current.getAutoScan(),
+            sensitivity: curSensitivity,
           },
         })
       );
@@ -323,6 +455,10 @@ export default function GazeProvider({ children }: { children: React.ReactNode }
         setIsDwellCoolingDown(dwellState.isCoolingDown);
         setBlinkProgress(dwellState.blinkProgress);
         setIsBlinkHolding(dwellState.isBlinkHolding);
+        setDiscreteDirection(direction);
+        setDeltaGazeX(deltaX);
+        setDeltaGazeY(deltaY);
+        setFocusedElementText(focusedText);
         setGazePoint({
           x: finalX,
           y: finalY,
@@ -375,6 +511,15 @@ export default function GazeProvider({ children }: { children: React.ReactNode }
         setShowCameraPreview,
         showLandmarksDebug,
         setShowLandmarksDebug,
+        discreteDirection,
+        deltaGazeX,
+        deltaGazeY,
+        sensitivity,
+        setSensitivity,
+        isAutoScanning,
+        setIsAutoScanning,
+        openCalibrationModal,
+        focusedElementText,
         isOSControlActive,
         setIsOSControlActive,
         osClickType,
@@ -434,6 +579,18 @@ export default function GazeProvider({ children }: { children: React.ReactNode }
           onCursorSpeedPresetChange={setCursorSpeedPresetIndex}
         />
       )}
+
+      {/* Fast 3-Second Neutral Baseline Calibration Modal */}
+      <CalibrationModal
+        isOpen={isCalibrationModalOpen}
+        onClose={() => setIsCalibrationModalOpen(false)}
+        onCalibrationComplete={(m) => {
+          setCalibrationModel(m);
+          setCalibrationScore(m.report.stabilityScore);
+          setIsCalibrationModalOpen(false);
+        }}
+        latestFeatures={latestEyeFeatures}
+      />
 
       {children}
     </GazeContext.Provider>

@@ -10,6 +10,8 @@ import {
   EyeFeatures,
   TrackingStatus,
   HeadPoseProxy,
+  HeadAlignment,
+  DiscreteDirection,
   NormalizedLandmark,
 } from "./types";
 
@@ -62,22 +64,35 @@ let rollingBlinkTimestamps: number[] = [];
 let droopStartTime: number | null = null;
 let currentFatigueLevel: "fresh" | "mild" | "high" = "fresh";
 
-// 5-frame median rolling history for fused gaze coordinates
+// 4-frame median rolling history for fused gaze coordinates
 let historyFusedGazeX: number[] = [];
 let historyFusedGazeY: number[] = [];
 
-// 5-frame rolling history for iris displacement
+// 4-frame rolling history for iris displacement
 let historyLX: number[] = [];
 let historyLY: number[] = [];
 let historyRX: number[] = [];
 let historyRY: number[] = [];
 
-function rollingMedian5(history: number[], newVal: number): number {
+function rollingMedian4(history: number[], newVal: number): number {
   history.push(newVal);
-  if (history.length > 5) history.shift();
+  if (history.length > 4) history.shift();
   const sorted = [...history].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+// 1-Step Neutral Gaze Baseline
+let neutralGazeX: number = 0.5;
+let neutralGazeY: number = 0.5;
+
+export function setNeutralGazeBaseline(x: number, y: number): void {
+  neutralGazeX = x;
+  neutralGazeY = y;
+}
+
+export function getNeutralGazeBaseline(): { x: number; y: number } {
+  return { x: neutralGazeX, y: neutralGazeY };
 }
 
 const WASM_CDN_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
@@ -271,6 +286,16 @@ export function extractEyeFeatures(
       pitchProxy: 0,
       yawProxy: 0,
     };
+    const defaultAlignment: HeadAlignment = {
+      faceScale: 0,
+      distanceStatus: "Too Far — Move Closer (~50cm)",
+      headCenterOffset: 1.0,
+      centerStatus: "Align Face Inside Oval",
+      headTiltAngle: 0,
+      tiltStatus: "Level",
+      isOptimal: false,
+      guidanceMessage: "Position Face Inside Oval (~50cm)",
+    };
     return {
       timestamp,
       status: "no_face",
@@ -282,6 +307,9 @@ export function extractEyeFeatures(
       gazeY: 0.5,
       blendshapesGazeX: 0.5,
       blendshapesGazeY: 0.5,
+      deltaGazeX: 0,
+      deltaGazeY: 0,
+      discreteDirection: "CENTER",
       leftEAR: 0,
       rightEAR: 0,
       averageEAR: 0,
@@ -290,6 +318,7 @@ export function extractEyeFeatures(
       isEyesClosed: false,
       closedDurationMs: 0,
       headPose: emptyHead,
+      headAlignment: defaultAlignment,
       featureVector: [1, 0.5, 0.5, 0.5, 0.5],
     };
   }
@@ -394,10 +423,10 @@ export function extractEyeFeatures(
   const rawLeftGazeY = (p468.y - leftCornerBaseY) / leftEyeWidth;
   const rawRightGazeY = (p473.y - rightCornerBaseY) / rightEyeWidth;
 
-  const medLeftX = rollingMedian5(historyLX, rawLeftGazeX);
-  const medLeftY = rollingMedian5(historyLY, rawLeftGazeY);
-  const medRightX = rollingMedian5(historyRX, rawRightGazeX);
-  const medRightY = rollingMedian5(historyRY, rawRightGazeY);
+  const medLeftX = rollingMedian4(historyLX, rawLeftGazeX);
+  const medLeftY = rollingMedian4(historyLY, rawLeftGazeY);
+  const medRightX = rollingMedian4(historyRX, rawRightGazeX);
+  const medRightY = rollingMedian4(historyRY, rawRightGazeY);
 
   const effLeftX = mirrorX ? -medLeftX : medLeftX;
   const effRightX = mirrorX ? -medRightX : medRightX;
@@ -423,11 +452,29 @@ export function extractEyeFeatures(
     ? 0.70 * bsGaze.normY + 0.30 * avgIrisY
     : avgIrisY;
 
-  // Apply 5-frame rolling median to fused gaze signals to eliminate residual micro-tremors
-  const gazeX = rollingMedian5(historyFusedGazeX, fusedRawX);
-  const gazeY = rollingMedian5(historyFusedGazeY, fusedRawY);
+  // Apply 4-frame rolling median to fused gaze signals to eliminate residual micro-tremors
+  const gazeX = rollingMedian4(historyFusedGazeX, fusedRawX);
+  const gazeY = rollingMedian4(historyFusedGazeY, fusedRawY);
 
-  // ── 5. Head Pose Estimation ──
+  // ── 4b. Relative Deflection & 4-Directional Discrete Signal ──
+  const deltaGazeX = gazeX - neutralGazeX;
+  const deltaGazeY = gazeY - neutralGazeY;
+
+  const THRESH_X = 0.08;
+  const THRESH_Y = 0.06;
+  let discreteDirection: DiscreteDirection = "CENTER";
+  if (Math.abs(deltaGazeX) > THRESH_X || Math.abs(deltaGazeY) > THRESH_Y) {
+    if (Math.abs(deltaGazeX) >= Math.abs(deltaGazeY)) {
+      discreteDirection = deltaGazeX < -THRESH_X ? "LEFT" : "RIGHT";
+    } else {
+      discreteDirection = deltaGazeY < -THRESH_Y ? "UP" : "DOWN";
+    }
+  }
+
+  // ── 5. Head Pose & Live Distance/Alignment Guide ──
+  const p10 = landmarks[10];   // forehead
+  const p152 = landmarks[152]; // chin
+
   const interOcularDist = Math.max(1e-4, distance(p33, p263));
   const eyeMidpointX = (leftEyeCenterX + rightEyeCenterX) / 2;
   const eyeMidpointY = (leftCornerBaseY + rightCornerBaseY) / 2;
@@ -441,6 +488,58 @@ export function extractEyeFeatures(
     interOcularDistance: interOcularDist,
     pitchProxy,
     yawProxy,
+  };
+
+  // Distance: faceScale (inter-ocular distance / frame width)
+  const faceScale = interOcularDist;
+  let distanceStatus: "Too Far — Move Closer (~50cm)" | "Too Close — Move Back (~50cm)" | "Good Distance";
+  if (faceScale < 0.14) {
+    distanceStatus = "Too Far — Move Closer (~50cm)";
+  } else if (faceScale > 0.28) {
+    distanceStatus = "Too Close — Move Back (~50cm)";
+  } else {
+    distanceStatus = "Good Distance";
+  }
+
+  // Centering: headCenterOffset from (0.5, 0.5)
+  const headCenterX = p1.x;
+  const headCenterY = (p10.y + p152.y) / 2;
+  const headCenterOffset = Math.hypot(headCenterX - 0.5, headCenterY - 0.5);
+  const centerStatus: "Centered" | "Align Face Inside Oval" =
+    headCenterOffset < 0.12 ? "Centered" : "Align Face Inside Oval";
+
+  // Head Tilt Angle: angle between corners 33 and 263
+  const tiltRad = Math.atan2(p263.y - p33.y, p263.x - p33.x);
+  const headTiltAngle = Math.abs(tiltRad * (180 / Math.PI));
+  const tiltStatus: "Level" | "Keep Head Level" =
+    headTiltAngle > 12 ? "Keep Head Level" : "Level";
+
+  const isOptimal =
+    faceScale >= 0.14 &&
+    faceScale <= 0.28 &&
+    headCenterOffset < 0.12 &&
+    headTiltAngle <= 12;
+
+  let guidanceMessage = "Optimal Alignment";
+  if (faceScale < 0.14) {
+    guidanceMessage = "Too Far — Move Closer (~50cm)";
+  } else if (faceScale > 0.28) {
+    guidanceMessage = "Too Close — Move Back (~50cm)";
+  } else if (headCenterOffset >= 0.12) {
+    guidanceMessage = "Align Face Inside Oval";
+  } else if (headTiltAngle > 12) {
+    guidanceMessage = "Keep Head Level";
+  }
+
+  const headAlignment: HeadAlignment = {
+    faceScale,
+    distanceStatus,
+    headCenterOffset,
+    centerStatus,
+    headTiltAngle,
+    tiltStatus,
+    isOptimal,
+    guidanceMessage,
   };
 
   // ── 6. Robust Feature Vector [1, gazeX, gazeY, headCenterX, headCenterY] ──
@@ -527,6 +626,9 @@ export function extractEyeFeatures(
     gazeY,
     blendshapesGazeX: bsGaze.normX,
     blendshapesGazeY: bsGaze.normY,
+    deltaGazeX,
+    deltaGazeY,
+    discreteDirection,
     leftEAR,
     rightEAR,
     averageEAR,
@@ -538,6 +640,7 @@ export function extractEyeFeatures(
     blinksPerMinute,
     isTripleBlinkSOS,
     headPose,
+    headAlignment,
     featureVector,
   };
 

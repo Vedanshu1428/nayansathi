@@ -37,6 +37,27 @@ export interface HeadPoseProxy {
   yawProxy: number;          // Horizontal nose displacement relative to eye center
 }
 
+export interface HeadAlignment {
+  faceScale: number;          // inter-ocular distance / frame width (0.0 to 1.0)
+  distanceStatus: "Too Far — Move Closer (~50cm)" | "Too Close — Move Back (~50cm)" | "Good Distance";
+  headCenterOffset: number;   // Euclidean distance from frame center (0.5, 0.5)
+  centerStatus: "Centered" | "Align Face Inside Oval";
+  headTiltAngle: number;      // degrees between landmark 33 and 263
+  tiltStatus: "Level" | "Keep Head Level";
+  isOptimal: boolean;
+  guidanceMessage: string;
+}
+
+export type DiscreteDirection = "LEFT" | "RIGHT" | "UP" | "DOWN" | "CENTER";
+
+export type GazeSensitivity = "low" | "medium" | "high";
+
+export const GAZE_SENSITIVITY_THRESHOLDS: Record<GazeSensitivity, { x: number; y: number }> = {
+  high: { x: 0.05, y: 0.04 },
+  medium: { x: 0.08, y: 0.06 },
+  low: { x: 0.12, y: 0.09 },
+};
+
 export interface EyeFeatures {
   timestamp: number;
   status: TrackingStatus;
@@ -49,6 +70,10 @@ export interface EyeFeatures {
   gazeY?: number;            // 0.0 to 1.0
   blendshapesGazeX?: number; // Raw normalized blendshape gaze X
   blendshapesGazeY?: number; // Raw normalized blendshape gaze Y
+  /** Relative gaze deflections from neutral center */
+  deltaGazeX?: number;
+  deltaGazeY?: number;
+  discreteDirection?: DiscreteDirection;
   leftEAR: number;           // Eye Aspect Ratio
   rightEAR: number;
   averageEAR: number;
@@ -63,6 +88,7 @@ export interface EyeFeatures {
   blinksPerMinute?: number;
   isTripleBlinkSOS?: boolean;
   headPose: HeadPoseProxy;
+  headAlignment?: HeadAlignment;
   featureVector: number[];   // [1, gazeX, gazeY, headPose.noseTipX, headPose.noseTipY]
 }
 
@@ -96,8 +122,23 @@ export interface CalibrationModelData {
   weightsY: number[];
   trainedAt: string;
   featureDim: number;
+  neutralGazeX?: number;      // 1-step neutral gaze baseline X
+  neutralGazeY?: number;      // 1-step neutral gaze baseline Y
+  openEyeBaseline?: number;   // baseline open eye EAR
   anchors?: GridAnchor[]; // 9 anchors for Piecewise 3x3 Bilinear + Ridge Hybrid
   report: CalibrationReport;
+}
+
+export interface DiscreteNavState {
+  focusedElement: HTMLElement | null;
+  focusedElementId: string | null;
+  direction: DiscreteDirection;
+  deltaX: number;
+  deltaY: number;
+  isBlinkHolding: boolean;
+  blinkProgress: number;      // 0.0 to 1.0
+  isAutoScanning: boolean;
+  sensitivity: GazeSensitivity;
 }
 
 export interface CalibrationReport {

@@ -12,7 +12,14 @@
  * - Freeze cursor to last open-eye position during eye closure
  */
 
-import { DwellSettings, DwellState, SelectionMode } from "./types";
+import {
+  DwellSettings,
+  DwellState,
+  SelectionMode,
+  GazeSensitivity,
+  GAZE_SENSITIVITY_THRESHOLDS,
+  DiscreteDirection,
+} from "./types";
 
 export class DwellEngine {
   private settings: DwellSettings;
@@ -399,5 +406,251 @@ export class DwellEngine {
     this.blinkStartTime = null;
     this.isBlinkHolding = false;
     this.snappedElement = null;
+  }
+
+  // ── 4-Directional Discrete Spatial Step Navigation ──
+  private spatialRows: HTMLElement[][] = [];
+  private currentFocusedEl: HTMLElement | null = null;
+  private lastStepTimestamp: number = 0;
+  private lastClickTimestamp: number = 0;
+  private isAutoScanning: boolean = false;
+  private lastAutoScanTime: number = 0;
+  private sensitivity: GazeSensitivity = "medium";
+
+  public updateSpatialGrid(): HTMLElement[][] {
+    if (typeof document === "undefined") return [];
+
+    const rawElements = Array.from(document.querySelectorAll('[data-dwell="true"]'));
+    const visibleElements: HTMLElement[] = [];
+
+    for (const el of rawElements) {
+      if (!(el instanceof HTMLElement)) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) continue;
+      const style = window.getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") continue;
+      visibleElements.push(el);
+    }
+
+    if (visibleElements.length === 0) {
+      this.spatialRows = [];
+      return [];
+    }
+
+    // Sort by vertical position (top)
+    visibleElements.sort((a, b) => {
+      const rectA = a.getBoundingClientRect();
+      const rectB = b.getBoundingClientRect();
+      return rectA.top - rectB.top;
+    });
+
+    // Group into rows with vertical tolerance (36px)
+    const rows: HTMLElement[][] = [];
+    const ROW_TOLERANCE_PX = 36;
+
+    for (const el of visibleElements) {
+      const rect = el.getBoundingClientRect();
+      const centerY = rect.top + rect.height / 2;
+
+      let placed = false;
+      for (const row of rows) {
+        const firstRect = row[0].getBoundingClientRect();
+        const firstCenterY = firstRect.top + firstRect.height / 2;
+        if (Math.abs(centerY - firstCenterY) < ROW_TOLERANCE_PX) {
+          row.push(el);
+          placed = true;
+          break;
+        }
+      }
+
+      if (!placed) {
+        rows.push([el]);
+      }
+    }
+
+    // Sort elements in each row left-to-right
+    for (const row of rows) {
+      row.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+    }
+
+    this.spatialRows = rows;
+
+    // Default to first element if none focused
+    if (!this.currentFocusedEl || !document.body.contains(this.currentFocusedEl)) {
+      if (rows.length > 0 && rows[0].length > 0) {
+        this.setFocusedElement(rows[0][0]);
+      }
+    }
+
+    return rows;
+  }
+
+  public setFocusedElement(el: HTMLElement | null): void {
+    if (this.currentFocusedEl && this.currentFocusedEl !== el) {
+      this.currentFocusedEl.removeAttribute("data-gaze-focused");
+      this.currentFocusedEl.classList.remove("gaze-focused-button");
+    }
+    this.currentFocusedEl = el;
+    if (el) {
+      el.setAttribute("data-gaze-focused", "true");
+      el.classList.add("gaze-focused-button");
+    }
+  }
+
+  public getFocusedElement(): HTMLElement | null {
+    return this.currentFocusedEl;
+  }
+
+  public stepDirection(direction: "LEFT" | "RIGHT" | "UP" | "DOWN", timestamp: number): boolean {
+    const STEP_COOLDOWN_MS = 450;
+    if (timestamp - this.lastStepTimestamp < STEP_COOLDOWN_MS) {
+      return false;
+    }
+
+    this.updateSpatialGrid();
+    if (this.spatialRows.length === 0) return false;
+
+    // Find current row and col index
+    let curRowIdx = -1;
+    let curColIdx = -1;
+
+    for (let r = 0; r < this.spatialRows.length; r++) {
+      const c = this.spatialRows[r].indexOf(this.currentFocusedEl!);
+      if (c !== -1) {
+        curRowIdx = r;
+        curColIdx = c;
+        break;
+      }
+    }
+
+    if (curRowIdx === -1) {
+      this.setFocusedElement(this.spatialRows[0][0]);
+      this.lastStepTimestamp = timestamp;
+      return true;
+    }
+
+    const currentRow = this.spatialRows[curRowIdx];
+    let nextTarget: HTMLElement | null = null;
+
+    if (direction === "RIGHT") {
+      if (curColIdx + 1 < currentRow.length) {
+        nextTarget = currentRow[curColIdx + 1];
+      } else if (curRowIdx + 1 < this.spatialRows.length) {
+        nextTarget = this.spatialRows[curRowIdx + 1][0];
+      } else {
+        nextTarget = this.spatialRows[0][0];
+      }
+    } else if (direction === "LEFT") {
+      if (curColIdx - 1 >= 0) {
+        nextTarget = currentRow[curColIdx - 1];
+      } else if (curRowIdx - 1 >= 0) {
+        const prevRow = this.spatialRows[curRowIdx - 1];
+        nextTarget = prevRow[prevRow.length - 1];
+      } else {
+        const lastRow = this.spatialRows[this.spatialRows.length - 1];
+        nextTarget = lastRow[lastRow.length - 1];
+      }
+    } else if (direction === "DOWN") {
+      if (curRowIdx + 1 < this.spatialRows.length) {
+        const nextRow = this.spatialRows[curRowIdx + 1];
+        const currentRect = this.currentFocusedEl!.getBoundingClientRect();
+        const currentCenterX = currentRect.left + currentRect.width / 2;
+        let closestEl = nextRow[0];
+        let minDist = Infinity;
+        for (const candidate of nextRow) {
+          const candRect = candidate.getBoundingClientRect();
+          const dist = Math.abs(candRect.left + candRect.width / 2 - currentCenterX);
+          if (dist < minDist) {
+            minDist = dist;
+            closestEl = candidate;
+          }
+        }
+        nextTarget = closestEl;
+      } else {
+        nextTarget = this.spatialRows[0][curColIdx] || this.spatialRows[0][0];
+      }
+    } else if (direction === "UP") {
+      if (curRowIdx - 1 >= 0) {
+        const prevRow = this.spatialRows[curRowIdx - 1];
+        const currentRect = this.currentFocusedEl!.getBoundingClientRect();
+        const currentCenterX = currentRect.left + currentRect.width / 2;
+        let closestEl = prevRow[0];
+        let minDist = Infinity;
+        for (const candidate of prevRow) {
+          const candRect = candidate.getBoundingClientRect();
+          const dist = Math.abs(candRect.left + candRect.width / 2 - currentCenterX);
+          if (dist < minDist) {
+            minDist = dist;
+            closestEl = candidate;
+          }
+        }
+        nextTarget = closestEl;
+      } else {
+        const lastRow = this.spatialRows[this.spatialRows.length - 1];
+        nextTarget = lastRow[curColIdx] || lastRow[0];
+      }
+    }
+
+    if (nextTarget && nextTarget !== this.currentFocusedEl) {
+      this.setFocusedElement(nextTarget);
+      this.lastStepTimestamp = timestamp;
+      return true;
+    }
+
+    return false;
+  }
+
+  public processHoldBlinkClick(
+    isEyesClosed: boolean,
+    closedDurationMs: number,
+    timestamp: number
+  ): { isClicked: boolean; blinkProgress: number; isBlinkHolding: boolean } {
+    const BLINK_HOLD_MS = this.settings.blinkHoldMs ?? 450;
+    const BLINK_COOLDOWN_MS = this.settings.blinkCooldownMs ?? 900;
+
+    if (!isEyesClosed) {
+      return { isClicked: false, blinkProgress: 0, isBlinkHolding: false };
+    }
+
+    const isBlinkHolding = closedDurationMs >= 120;
+    const blinkProgress = Math.min(1.0, closedDurationMs / BLINK_HOLD_MS);
+
+    if (closedDurationMs >= BLINK_HOLD_MS) {
+      if (timestamp - this.lastClickTimestamp >= BLINK_COOLDOWN_MS) {
+        this.lastClickTimestamp = timestamp;
+        if (this.currentFocusedEl) {
+          this.currentFocusedEl.click();
+          return { isClicked: true, blinkProgress: 1.0, isBlinkHolding: false };
+        }
+      }
+    }
+
+    return { isClicked: false, blinkProgress, isBlinkHolding };
+  }
+
+  public stepAutoScan(timestamp: number): void {
+    if (!this.isAutoScanning) return;
+    const AUTO_SCAN_INTERVAL_MS = 1800;
+    if (timestamp - this.lastAutoScanTime >= AUTO_SCAN_INTERVAL_MS) {
+      this.lastAutoScanTime = timestamp;
+      this.stepDirection("RIGHT", timestamp);
+    }
+  }
+
+  public setAutoScan(enabled: boolean): void {
+    this.isAutoScanning = enabled;
+    this.lastAutoScanTime = performance.now();
+  }
+
+  public getAutoScan(): boolean {
+    return this.isAutoScanning;
+  }
+
+  public setSensitivity(s: GazeSensitivity): void {
+    this.sensitivity = s;
+  }
+
+  public getSensitivity(): GazeSensitivity {
+    return this.sensitivity;
   }
 }
