@@ -97,10 +97,11 @@ export default function Navbar({
   return (
     <header className={`w-full sticky top-0 z-40 transition-colors border-b ${
       isHighContrast
-        ? "bg-black border-yellow-400 text-yellow-400"
+        ? "bg-slate-900/95 backdrop-blur border-slate-800 text-slate-100 shadow-lg"
         : "bg-white/95 backdrop-blur border-slate-200 text-slate-800 shadow-sm"
     }`}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      {/* Edge-to-edge full width with px-4 md:px-6 */}
+      <div className="w-full px-4 md:px-6">
         <div className="flex items-center justify-between h-16">
           {/* Brand Logo & Tagline */}
           <div className="flex items-center gap-3">
@@ -109,17 +110,17 @@ export default function Navbar({
               data-dwell="true"
               className="flex items-center gap-2.5 font-bold text-xl tracking-tight focus:outline-none"
             >
-              <div className={`p-2 rounded-xl flex items-center justify-center ${
-                isHighContrast ? "bg-yellow-400 text-black" : "bg-teal-600 text-white shadow-md shadow-teal-600/20"
-              }`}>
+              <div className="p-2 rounded-xl flex items-center justify-center bg-teal-600 text-white shadow-md shadow-teal-600/20">
                 <Eye className="w-5 h-5" />
               </div>
               <div className="flex flex-col">
-                <span className="leading-none text-lg font-black tracking-tight">
+                <span className={`leading-none text-lg font-black tracking-tight ${
+                  isHighContrast ? "text-slate-100" : "text-slate-900"
+                }`}>
                   GazeConnect
                 </span>
                 <span className={`text-[10px] tracking-wide font-medium ${
-                  isHighContrast ? "text-yellow-300" : "text-slate-500"
+                  isHighContrast ? "text-slate-400" : "text-slate-500"
                 }`}>
                   Your Eyes. Your Voice.
                 </span>
@@ -139,10 +140,10 @@ export default function Navbar({
                   className={`px-3 py-2 rounded-lg text-sm font-semibold transition-all ${
                     isActive
                       ? isHighContrast
-                        ? "bg-yellow-400 text-black"
+                        ? "bg-teal-900/50 text-teal-300 font-bold border border-teal-700/60"
                         : "bg-teal-50 text-teal-700 font-bold border border-teal-200"
                       : isHighContrast
-                      ? "hover:bg-neutral-800 text-yellow-400"
+                      ? "hover:bg-slate-800 text-slate-300 hover:text-slate-100"
                       : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
                   }`}
                 >
@@ -157,7 +158,7 @@ export default function Navbar({
             {/* Gaze vs Mouse Toggle */}
             <div
               className={`flex items-center p-1 rounded-xl border ${
-                isHighContrast ? "border-yellow-400 bg-neutral-900" : "border-slate-200 bg-slate-100"
+                isHighContrast ? "border-slate-800 bg-slate-950" : "border-slate-200 bg-slate-100"
               }`}
               role="group"
               aria-label="Interaction Mode Toggle"
@@ -169,11 +170,9 @@ export default function Navbar({
                 aria-pressed={currentMode === "gaze"}
                 className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
                   currentMode === "gaze"
-                    ? isHighContrast
-                      ? "bg-yellow-400 text-black shadow"
-                      : "bg-teal-600 text-white shadow-sm"
+                    ? "bg-teal-600 text-white shadow-sm"
                     : isHighContrast
-                    ? "text-yellow-300 hover:text-yellow-100"
+                    ? "text-slate-400 hover:text-slate-200"
                     : "text-slate-600 hover:text-slate-900"
                 }`}
                 title="Gaze Tracking Mode (Webcam eye-tracking + dwell selection)"
@@ -189,10 +188,10 @@ export default function Navbar({
                 className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
                   currentMode === "mouse"
                     ? isHighContrast
-                      ? "bg-yellow-400 text-black shadow"
+                      ? "bg-slate-700 text-white shadow-sm"
                       : "bg-slate-800 text-white shadow-sm"
                     : isHighContrast
-                    ? "text-yellow-300 hover:text-yellow-100"
+                    ? "text-slate-400 hover:text-slate-200"
                     : "text-slate-600 hover:text-slate-900"
                 }`}
                 title="Manual Mode (Mouse clicks & touch taps fallback)"
@@ -207,10 +206,10 @@ export default function Navbar({
               className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-semibold border ${
                 isOnline
                   ? isHighContrast
-                    ? "border-green-400 bg-green-950/40 text-green-300"
+                    ? "border-emerald-800/80 bg-emerald-950/40 text-emerald-300"
                     : "border-emerald-200 bg-emerald-50 text-emerald-700"
                   : isHighContrast
-                  ? "border-amber-400 bg-amber-950/40 text-amber-300"
+                  ? "border-amber-800 bg-amber-950/40 text-amber-300"
                   : "border-amber-200 bg-amber-50 text-amber-800"
               }`}
               title={
@@ -221,72 +220,72 @@ export default function Navbar({
             >
               {isOnline ? (
                 <>
-                  <Wifi className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 animate-pulse" />
+                  <Wifi className="w-3.5 h-3.5 text-emerald-500 animate-pulse" />
                   <span className="hidden lg:inline">Online</span>
                 </>
               ) : (
                 <>
-                  <WifiOff className="w-3.5 h-3.5 text-amber-600" />
-                  <span className="font-bold">Offline Active</span>
+                  <WifiOff className="w-3.5 h-3.5 text-amber-500" />
+                  <span className="font-bold">Offline</span>
                 </>
               )}
             </div>
 
-            {/* High Contrast Toggle Button */}
+            {/* Dark Theme / Night Mode Toggle Button */}
             {onToggleHighContrast && (
               <button
                 type="button"
                 data-dwell="true"
                 onClick={onToggleHighContrast}
-                className={`p-2 rounded-lg border text-xs font-bold transition-all ${
+                className={`p-2 rounded-xl border text-xs font-bold transition-all ${
                   isHighContrast
-                    ? "bg-yellow-400 text-black border-yellow-400"
-                    : "border-slate-200 hover:bg-slate-100 text-slate-700"
+                    ? "bg-slate-800 text-teal-400 border-slate-700 hover:bg-slate-700"
+                    : "border-slate-200 bg-white hover:bg-slate-100 text-slate-700"
                 }`}
-                title="Toggle High Contrast Mode"
-                aria-label="Toggle High Contrast Mode"
+                title="Toggle Slate Dark Theme"
+                aria-label="Toggle Slate Dark Theme"
               >
                 <SunMoon className="w-4 h-4" />
               </button>
             )}
 
-            {/* Emergency Button */}
+            {/* Quick Emergency Button */}
             <a
               href="/communicate?tab=emergency"
               data-dwell="true"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold text-white bg-red-600 hover:bg-red-700 active:scale-95 transition-all shadow-md shadow-red-600/30 border border-red-500"
-              title="Emergency Mode — Immediate Assistance"
+              className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-sm transition-all"
+              title="Quick SOS Emergency Alert"
             >
               <AlertTriangle className="w-3.5 h-3.5" />
-              <span>EMERGENCY</span>
+              <span>SOS</span>
             </a>
 
-            {/* Mobile Menu Button */}
+            {/* Mobile Menu Hamburger */}
             <button
               type="button"
-              className="md:hidden p-2 rounded-lg text-slate-700 hover:bg-slate-100"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              aria-label="Toggle menu"
+              className="md:hidden p-2 rounded-lg text-slate-600 hover:text-slate-900 focus:outline-none"
+              aria-label="Toggle Navigation Menu"
             >
-              {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
             </button>
           </div>
         </div>
 
-        {/* Mobile menu dropdown */}
+        {/* Mobile Dropdown Menu */}
         {mobileMenuOpen && (
-          <div className="md:hidden py-3 border-t border-slate-200 flex flex-col space-y-1">
+          <div className="md:hidden py-4 border-t border-slate-200 space-y-2">
             {navLinks.map((link) => (
               <a
                 key={link.href}
                 href={link.href}
                 data-dwell="true"
                 onClick={() => setMobileMenuOpen(false)}
-                className={`px-3 py-2 rounded-lg text-sm font-semibold ${
+                className={`block px-4 py-2.5 rounded-lg text-sm font-bold ${
                   pathname === link.href
-                    ? isHighContrast
-                      ? "bg-yellow-400 text-black font-bold"
-                      : "bg-teal-50 text-teal-700 font-bold"
+                    ? "bg-teal-50 text-teal-700"
+                    : isHighContrast
+                    ? "text-slate-200 hover:bg-slate-800"
                     : "text-slate-700 hover:bg-slate-100"
                 }`}
               >

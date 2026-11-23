@@ -68,29 +68,29 @@ export default function CaregiverPortal() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-ice-50 text-navy-900">
+    <div className="min-h-screen flex flex-col bg-ice-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors">
       <Navbar />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
+      <main className="flex-1 w-full max-w-none px-4 md:px-6 py-6 space-y-6">
         {/* Header */}
-        <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-800 border border-teal-200 mb-2">
-              <Shield className="w-3.5 h-3.5 text-teal-600" />
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-teal-50 dark:bg-teal-950 text-teal-800 dark:text-teal-300 border border-teal-200 dark:border-teal-800 mb-2">
+              <Shield className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400" />
               <span>Consent-Gated Caregiver Portal</span>
             </div>
-            <h1 className="text-2xl sm:text-3xl font-black text-slate-900">
+            <h1 className="text-2xl sm:text-3xl font-black">
               Caregiver Assistant & Remote Config
             </h1>
-            <p className="text-sm text-slate-600 mt-1">
+            <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
               Configure communication presets, update quick phrases, and support your connected patients.
             </p>
           </div>
         </div>
 
         {/* Patient Selection Strip */}
-        <section className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm space-y-3">
-          <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
+        <section className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
+          <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">
             Connected Patients Network
           </label>
           <div className="flex flex-wrap gap-3">
@@ -103,21 +103,21 @@ export default function CaregiverPortal() {
                   type="button"
                   data-dwell="true"
                   onClick={() => setSelectedPatientId(pat.patientId)}
-                  className={`p-3 rounded-xl border text-left transition-all flex items-center gap-3 ${
+                  className={`p-3 rounded-2xl border text-left transition-all flex items-center gap-3 ${
                     isSelected
-                      ? "border-teal-600 bg-teal-50 ring-2 ring-teal-600/20"
-                      : "border-slate-200 bg-slate-50 hover:bg-slate-100"
+                      ? "border-teal-600 bg-teal-50 dark:bg-teal-950/60 ring-2 ring-teal-600/20"
+                      : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 hover:bg-slate-100 dark:hover:bg-slate-800"
                   }`}
                 >
-                  <div className={`p-2 rounded-lg font-bold text-sm ${
-                    isActive ? "bg-teal-600 text-white" : "bg-slate-300 text-slate-700"
+                  <div className={`p-2 rounded-xl font-bold text-sm ${
+                    isActive ? "bg-teal-600 text-white" : "bg-slate-300 dark:bg-slate-700 text-slate-700 dark:text-slate-300"
                   }`}>
                     <UserCheck className="w-4 h-4" />
                   </div>
                   <div>
-                    <h4 className="font-bold text-sm text-slate-900">{pat.patientName}</h4>
+                    <h4 className="font-bold text-sm">{pat.patientName}</h4>
                     <span className={`text-[11px] font-semibold ${
-                      isActive ? "text-emerald-700" : "text-amber-700"
+                      isActive ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"
                     }`}>
                       {isActive ? "Active Connection" : "Consent Pending"}
                     </span>

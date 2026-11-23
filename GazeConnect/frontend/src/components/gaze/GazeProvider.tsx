@@ -72,13 +72,13 @@ export default function GazeProvider({ children }: { children: React.ReactNode }
   const [mirrorX, setMirrorXState] = useState<boolean>(true); // default true for front webcams
   const [blinkHoldMs, setBlinkHoldMs] = useState(450);
   const [dwellDurationMs, setDwellDurationMs] = useState(1600);
-  const [smoothingBeta, setSmoothingBeta] = useState(0.002);
-  const [cursorSpeedPresetIndex, setCursorSpeedPresetIndex] = useState(1); // Slow/Balanced default
-  const [showCameraPreview, setShowCameraPreview] = useState(true);
+  const [smoothingBeta, setSmoothingBeta] = useState(0.08);
+  const [cursorSpeedPresetIndex, setCursorSpeedPresetIndex] = useState(1); // Slow/Balanced default (minCutoff=1.0, beta=0.08)
+  const [showCameraPreview, setShowCameraPreview] = useState(false); // Collapsed by default so it never blocks bottom-right keys
   const [showLandmarksDebug, setShowLandmarksDebug] = useState(false);
 
   const filterRef = useRef(
-    new OneEuroFilter2D({ minCutoff: 0.15, beta: 0.002, dCutoff: 1.0 })
+    new OneEuroFilter2D({ minCutoff: 1.0, beta: 0.08, dCutoff: 1.0 })
   );
   const dwellEngineRef = useRef(
     new DwellEngine({
@@ -274,17 +274,31 @@ export default function GazeProvider({ children }: { children: React.ReactNode }
         setShowLandmarksDebug,
       }}
     >
-      {/* Persistent global webcam tracker — stays mounted across page navigation */}
+      {/* Persistent global webcam tracker — positioned safely at top-right or hidden when collapsed so it NEVER covers bottom-right keyboard keys (ENTER/M/BKSP) */}
       <div
-        className={showCameraPreview ? "fixed bottom-20 right-4 z-30" : "sr-only"}
+        className={
+          showCameraPreview
+            ? "fixed top-20 right-4 z-30 shadow-2xl rounded-2xl border-2 border-slate-700 bg-slate-900"
+            : "sr-only"
+        }
         aria-hidden="true"
       >
-        <WebcamTracker
-          showPreview={showCameraPreview}
-          showDebugMesh={showLandmarksDebug}
-          onFeaturesUpdate={handleFeaturesUpdate}
-          onStatusChange={handleStatusChange}
-        />
+        <div className="relative">
+          <WebcamTracker
+            showPreview={showCameraPreview}
+            showDebugMesh={showLandmarksDebug}
+            onFeaturesUpdate={handleFeaturesUpdate}
+            onStatusChange={handleStatusChange}
+          />
+          <button
+            type="button"
+            onClick={() => setShowCameraPreview(false)}
+            className="absolute top-2 right-2 bg-black/70 hover:bg-black text-white text-xs px-2 py-0.5 rounded-md font-bold z-40"
+            title="Minimize Camera Widget"
+          >
+            ✕
+          </button>
+        </div>
       </div>
 
       {/* Global gaze cursor overlay */}

@@ -210,20 +210,24 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className={`min-h-screen flex flex-col ${isHighContrast ? "bg-black text-yellow-400" : "bg-ice-50 text-navy-900"}`}>
+    <div className={`min-h-screen flex flex-col transition-colors ${
+      isHighContrast ? "bg-slate-950 text-slate-100" : "bg-ice-50 text-slate-900"
+    }`}>
       <Navbar
         isHighContrast={isHighContrast}
         onToggleHighContrast={() => setIsHighContrast(!isHighContrast)}
       />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
+      <main className="flex-1 w-full max-w-none px-4 md:px-6 py-6 space-y-6">
         {/* Top Header Card */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 rounded-2xl bg-white border border-slate-200 shadow-sm">
+        <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 rounded-3xl border shadow-sm ${
+          isHighContrast ? "bg-slate-900 border-slate-800 text-slate-100" : "bg-white border-slate-200 text-slate-900"
+        }`}>
           <div>
-            <h1 className="text-2xl sm:text-3xl font-black text-slate-900">
+            <h1 className="text-2xl sm:text-3xl font-black">
               Patient Control Dashboard
             </h1>
-            <p className="text-sm text-slate-600 mt-1">
+            <p className={`text-sm mt-1 ${isHighContrast ? "text-slate-400" : "text-slate-600"}`}>
               Customize your communication phrases, privacy preferences, emergency network, and calibration settings.
             </p>
           </div>
@@ -232,7 +236,7 @@ export default function DashboardPage() {
             href="/communicate"
             data-dwell="true"
             aria-label="Launch Communication Mode"
-            className="inline-flex items-center gap-2 px-5 py-3 min-h-[60px] rounded-xl font-bold text-sm bg-teal-600 hover:bg-teal-700 text-white shadow-md shadow-teal-600/20 transition-all self-start sm:self-auto"
+            className="inline-flex items-center gap-2 px-5 py-3 min-h-[52px] rounded-2xl font-bold text-sm bg-teal-600 hover:bg-teal-700 text-white shadow-md shadow-teal-600/20 transition-all self-start sm:self-auto"
           >
             <Eye className="w-4 h-4" />
             <span>Launch Communication Mode</span>
@@ -241,7 +245,9 @@ export default function DashboardPage() {
         </div>
 
         {/* Dashboard Navigation Tabs */}
-        <div className="flex gap-2 border-b border-slate-200 pb-2 overflow-x-auto" role="tablist">
+        <div className={`flex gap-2 border-b pb-2 overflow-x-auto ${
+          isHighContrast ? "border-slate-800" : "border-slate-200"
+        }`} role="tablist">
           {[
             { id: "phrases", label: "Saved Phrases", icon: BookmarkPlus },
             { id: "history", label: "Communication History", icon: History },

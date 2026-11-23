@@ -69,8 +69,8 @@ export class OneEuroFilter2D {
   private lastAcceptedY: number = 0;
 
   // Speed & deadzone controls (overridable via applyPreset)
-  private maxSpeedPxPerSec: number = 750;
-  private deadzoneRadius: number = 22;
+  private maxSpeedPxPerSec: number = 900;
+  private deadzoneRadius: number = 5; // 5px fixation dead-zone so cursor stays rock steady on keys
 
   // Last output position for deadzone & velocity clamping
   private lastOutputX: number = 0;
@@ -78,8 +78,8 @@ export class OneEuroFilter2D {
 
   constructor(config: Partial<OneEuroConfig> = {}) {
     this.config = {
-      minCutoff: config.minCutoff ?? 0.15,
-      beta: config.beta ?? 0.002,
+      minCutoff: config.minCutoff ?? 1.0,
+      beta: config.beta ?? 0.08,
       dCutoff: config.dCutoff ?? 1.0,
     };
 

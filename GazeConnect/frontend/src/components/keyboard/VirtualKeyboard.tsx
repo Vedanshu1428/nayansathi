@@ -9,12 +9,9 @@ import {
   Space,
   Globe,
   SlidersHorizontal,
-  ChevronLeft,
-  ChevronRight,
   Hash,
   Sparkles,
   Volume2,
-  LayoutGrid,
 } from "lucide-react";
 
 interface VirtualKeyboardProps {
@@ -24,10 +21,10 @@ interface VirtualKeyboardProps {
   isHighContrast?: boolean;
 }
 
-type LayoutType = "4x3-Grid" | "QWERTY" | "Simplified" | "Large-Key" | "High-Contrast";
+type LayoutType = "QWERTY" | "4x3-Grid" | "Simplified";
 type ScriptType = "EN" | "HI" | "ES" | "ZH";
 
-// 4x3 Ultra-Accessible Grid Blocks
+// 4x3 Ultra-Accessible Grid Blocks (Optional Mode)
 const GRID_4X3_BLOCKS = [
   { id: "A-D", label: "A B C D", letters: ["A", "B", "C", "D"] },
   { id: "E-H", label: "E F G H", letters: ["E", "F", "G", "H"] },
@@ -49,13 +46,13 @@ export default function VirtualKeyboard({
   onSpeakRequested,
   isHighContrast = false,
 }: VirtualKeyboardProps) {
-  const [layout, setLayout] = useState<LayoutType>("4x3-Grid"); // Default to 4x3-Grid in Gaze Mode!
+  // Default directly to Large-Key QWERTY as required!
+  const [layout, setLayout] = useState<LayoutType>("QWERTY");
   const [script, setScript] = useState<ScriptType>("EN");
   const [showNumbers, setShowNumbers] = useState<boolean>(false);
-  const [largeKeyPage, setLargeKeyPage] = useState<number>(0);
   const [undoStack, setUndoStack] = useState<string[]>([]);
 
-  // Active sub-block modal for 4x3 grid letter expansion
+  // Active sub-block state for 4x3 grid
   const [activeSubBlock, setActiveSubBlock] = useState<{
     id: string;
     label: string;
@@ -73,7 +70,7 @@ export default function VirtualKeyboard({
     pushUndo(activeText);
     onTextChange(activeText + char);
     if (activeSubBlock) {
-      setActiveSubBlock(null); // Return to main 12-block grid upon selection
+      setActiveSubBlock(null);
     }
   };
 
@@ -146,43 +143,27 @@ export default function VirtualKeyboard({
     ["Z", "X", "C", "V", "B", "N", "M", "Á", "É", "Í", "Ó", "Ú"],
   ];
 
-  const hindiVowels = ["अ", "आ", "इ", "ई", "उ", "ऊ", "ए", "ऐ", "ओ", "औ", "ा", "ि", "ी", "ु", "ू", "े", "ै", "ो", "ौ", "्"];
-  const hindiConsonants = [
-    "क", "ख", "ग", "घ", "च", "छ", "ज", "झ", "ट", "ठ", "ड", "ढ",
-    "त", "थ", "द", "ध", "न", "प", "फ", "ब", "भ", "म", "य", "र", "ल", "व", "श", "ष", "स", "ह"
-  ];
-
   const numberRow = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
-  const punctRow = [".", ",", "?", "!", "-", "'"];
-
-  const largeKeyAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
-  const largeKeyPageSize = 12;
-  const totalLargePages = Math.ceil(largeKeyAlphabet.length / largeKeyPageSize);
-  const largeKeySlice = largeKeyAlphabet.slice(
-    largeKeyPagePageSafe(largeKeyPage) * largeKeyPageSize,
-    (largeKeyPagePageSafe(largeKeyPage) + 1) * largeKeyPageSize
-  );
-
-  function largeKeyPagePageSafe(p: number) {
-    return Math.max(0, Math.min(p, totalLargePages - 1));
-  }
-
-  const isCurrentHighContrast = isHighContrast || layout === "High-Contrast";
+  const punctKeys = [".", ",", "?", "!", "'"];
 
   return (
-    <div className={`p-4 sm:p-5 rounded-3xl border transition-colors ${
-      isCurrentHighContrast
-        ? "bg-black border-yellow-400 text-yellow-300"
-        : "bg-white border-slate-200 shadow-xl"
-    }`}>
+    <div
+      className={`w-full p-3 sm:p-4 rounded-3xl border transition-colors flex flex-col justify-between ${
+        isHighContrast
+          ? "bg-slate-900 border-slate-700 text-slate-100 shadow-2xl"
+          : "bg-white border-slate-200 shadow-xl text-slate-900"
+      }`}
+    >
       {/* 1. TOP STRIP: 5 OFFLINE WORD PREDICTIONS */}
-      <div className="mb-4">
-        <div className="flex items-center justify-between text-xs font-bold text-slate-500 mb-1.5 px-1">
-          <span className="flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-teal-600" />
+      <div className="mb-2.5">
+        <div className="flex items-center justify-between text-xs font-bold text-slate-500 dark:text-slate-400 mb-1 px-1">
+          <span className="flex items-center gap-1.5 text-teal-600 dark:text-teal-400">
+            <Sparkles className="w-3.5 h-3.5" />
             <span>Word Suggestions (1-Dwell Complete)</span>
           </span>
-          <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
+          <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${
+            isHighContrast ? "bg-slate-800 text-slate-300" : "bg-slate-100 text-slate-600"
+          }`}>
             Offline Lexicon
           </span>
         </div>
@@ -194,10 +175,10 @@ export default function VirtualKeyboard({
               type="button"
               data-dwell="true"
               onClick={() => handleSelectPrediction(word)}
-              className={`h-14 sm:h-16 rounded-xl font-bold text-sm sm:text-base border transition-all flex items-center justify-center px-2 text-center truncate ${
-                isCurrentHighContrast
-                  ? "bg-neutral-900 border-yellow-400 text-yellow-300 hover:bg-yellow-400 hover:text-black"
-                  : "bg-teal-50/70 hover:bg-teal-100/80 border-teal-200 text-teal-900 hover:border-teal-500 shadow-sm"
+              className={`h-11 sm:h-12 rounded-xl font-bold text-sm sm:text-base border transition-all flex items-center justify-center px-2 text-center truncate ${
+                isHighContrast
+                  ? "bg-slate-800 hover:bg-teal-900/60 border-slate-700 text-teal-300 hover:border-teal-500 shadow-sm"
+                  : "bg-teal-50/70 hover:bg-teal-100 border-teal-200 text-teal-900 hover:border-teal-500 shadow-sm"
               }`}
             >
               {word}
@@ -207,12 +188,13 @@ export default function VirtualKeyboard({
       </div>
 
       {/* 2. CONTROLS STRIP: LAYOUT & SCRIPT SWITCHERS */}
-      <div className="flex flex-wrap items-center justify-between gap-2 pb-3 mb-3 border-b border-slate-100 text-xs font-semibold">
-        {/* Layout Switcher */}
+      <div className={`flex flex-wrap items-center justify-between gap-2 pb-2 mb-2 border-b text-xs font-semibold ${
+        isHighContrast ? "border-slate-800 text-slate-300" : "border-slate-100 text-slate-600"
+      }`}>
         <div className="flex items-center gap-1">
           <SlidersHorizontal className="w-3.5 h-3.5 text-slate-400 ml-1" />
-          <span className="text-slate-500 hidden sm:inline mr-1">Layout:</span>
-          {(["4x3-Grid", "QWERTY", "Simplified", "Large-Key", "High-Contrast"] as LayoutType[]).map((l) => (
+          <span className="text-slate-400 hidden sm:inline mr-1">Layout:</span>
+          {(["QWERTY", "4x3-Grid", "Simplified"] as LayoutType[]).map((l) => (
             <button
               key={l}
               type="button"
@@ -221,31 +203,34 @@ export default function VirtualKeyboard({
                 setLayout(l);
                 setActiveSubBlock(null);
               }}
-              className={`px-2.5 py-1.5 rounded-lg font-bold text-xs transition-all ${
+              className={`px-3 py-1 rounded-lg font-bold text-xs transition-all ${
                 layout === l
                   ? "bg-teal-600 text-white shadow-sm"
+                  : isHighContrast
+                  ? "bg-slate-800 hover:bg-slate-700 text-slate-300"
                   : "bg-slate-100 hover:bg-slate-200 text-slate-700"
               }`}
             >
-              {l === "4x3-Grid" ? "4x3 Grid (Gaze)" : l}
+              {l === "QWERTY" ? "Large QWERTY" : l}
             </button>
           ))}
         </div>
 
-        {/* Script / Language Switcher */}
         <div className="flex items-center gap-1">
           <Globe className="w-3.5 h-3.5 text-slate-400 ml-1" />
-          <span className="text-slate-500 hidden sm:inline mr-1">Language:</span>
-          {(["EN", "HI", "ES", "ZH"] as ScriptType[]).map((s) => (
+          <span className="text-slate-400 hidden sm:inline mr-1">Lang:</span>
+          {(["EN", "ES"] as ScriptType[]).map((s) => (
             <button
               key={s}
               type="button"
               data-dwell="true"
               onClick={() => setScript(s)}
-              className={`px-2.5 py-1.5 rounded-lg font-bold text-xs transition-all ${
+              className={`px-2.5 py-1 rounded-lg font-bold text-xs transition-all ${
                 script === s
-                  ? "bg-slate-800 text-white shadow-sm"
-                  : "bg-slate-100 hover:bg-slate-200 text-slate-700"
+                  ? "bg-slate-700 text-white shadow-sm"
+                  : isHighContrast
+                  ? "bg-slate-800 text-slate-400 hover:text-slate-200"
+                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
               }`}
             >
               {s}
@@ -258,14 +243,18 @@ export default function VirtualKeyboard({
       <div className="space-y-2">
         {/* Number row (when toggled) */}
         {showNumbers && (
-          <div className="grid grid-cols-10 gap-1.5 sm:gap-2">
+          <div className="grid grid-cols-10 gap-2">
             {numberRow.map((num) => (
               <button
                 key={num}
                 type="button"
                 data-dwell="true"
                 onClick={() => handleKeyPress(num)}
-                className="h-16 sm:h-20 rounded-xl font-black text-lg sm:text-xl bg-slate-100 hover:bg-teal-50 border border-slate-300 text-slate-800 flex items-center justify-center shadow-sm"
+                className={`min-h-[58px] sm:min-h-[64px] rounded-2xl font-black text-xl sm:text-2xl border flex items-center justify-center shadow-sm transition-all active:scale-95 ${
+                  isHighContrast
+                    ? "bg-slate-800 hover:bg-teal-900/60 border-slate-700 text-slate-100"
+                    : "bg-slate-50 hover:bg-teal-50 border-slate-300 text-slate-800"
+                }`}
               >
                 {num}
               </button>
@@ -273,21 +262,55 @@ export default function VirtualKeyboard({
           </div>
         )}
 
-        {/* ── 4X3 ULTRA-ACCESSIBLE OVERSIZED GRID (MAX 12 HUGE TARGETS) ── */}
-        {layout === "4x3-Grid" ? (
+        {/* ── DEFAULT LARGE-KEY QWERTY WITH GENEROUS SPACING ── */}
+        {layout === "QWERTY" && (
+          <div className="space-y-2.5">
+            {(script === "ES" ? spanishRows : qwertyRows).map((row, rIdx) => (
+              <div key={rIdx} className="flex justify-center gap-2 sm:gap-2.5">
+                {row.map((letter) => (
+                  <button
+                    key={letter}
+                    type="button"
+                    data-dwell="true"
+                    onClick={() => handleKeyPress(letter)}
+                    className={`flex-1 min-h-[58px] sm:min-h-[64px] max-w-[96px] rounded-2xl font-black text-xl sm:text-2xl border flex items-center justify-center shadow-md transition-all active:scale-95 ${
+                      isHighContrast
+                        ? "bg-slate-800 hover:bg-teal-900/60 border-slate-700 text-slate-100 hover:border-teal-500"
+                        : "bg-slate-50 hover:bg-teal-50 hover:border-teal-500 border-slate-300 text-slate-900"
+                    }`}
+                  >
+                    {letter}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── 4X3 ULTRA-ACCESSIBLE OVERSIZED GRID (OPTIONAL TOGGLE) ── */}
+        {layout === "4x3-Grid" && (
           <div className="relative">
-            {/* Expanded 4-letter sub-block selector */}
             {activeSubBlock ? (
-              <div className="p-4 rounded-2xl bg-teal-50 border-2 border-teal-500 shadow-xl space-y-4 animate-in fade-in zoom-in-95">
+              <div className={`p-4 rounded-2xl border-2 space-y-3 ${
+                isHighContrast
+                  ? "bg-slate-800 border-teal-500"
+                  : "bg-teal-50 border-teal-500 shadow-xl"
+              }`}>
                 <div className="flex items-center justify-between">
-                  <span className="text-sm font-black text-teal-900 uppercase">
-                    Select Letter from Group: {activeSubBlock.label}
+                  <span className={`text-xs font-black uppercase ${
+                    isHighContrast ? "text-teal-300" : "text-teal-950"
+                  }`}>
+                    Group: {activeSubBlock.label}
                   </span>
                   <button
                     type="button"
                     data-dwell="true"
                     onClick={() => setActiveSubBlock(null)}
-                    className="px-4 py-2 rounded-xl text-xs font-bold bg-white text-slate-700 border border-slate-300 shadow-sm hover:bg-slate-50"
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border ${
+                      isHighContrast
+                        ? "bg-slate-700 border-slate-600 text-slate-200"
+                        : "bg-white text-slate-700 border-slate-300 shadow-sm"
+                    }`}
                   >
                     ← Back to Grid
                   </button>
@@ -299,7 +322,11 @@ export default function VirtualKeyboard({
                       type="button"
                       data-dwell="true"
                       onClick={() => handleKeyPress(char)}
-                      className="h-28 sm:h-36 rounded-2xl font-black text-4xl sm:text-5xl bg-white hover:bg-teal-600 hover:text-white border-2 border-teal-300 text-teal-950 flex items-center justify-center shadow-lg transition-all"
+                      className={`min-h-[72px] sm:min-h-[84px] rounded-2xl font-black text-3xl sm:text-4xl border-2 flex items-center justify-center shadow-lg transition-all ${
+                        isHighContrast
+                          ? "bg-slate-700 hover:bg-teal-600 border-slate-600 text-slate-100 hover:text-white"
+                          : "bg-white hover:bg-teal-600 hover:text-white border-teal-300 text-teal-950"
+                      }`}
                     >
                       {char}
                     </button>
@@ -307,8 +334,7 @@ export default function VirtualKeyboard({
                 </div>
               </div>
             ) : (
-              /* Main 4x3 Grid (12 Giant Buttons) */
-              <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5">
                 {GRID_4X3_BLOCKS.map((block) => (
                   <button
                     key={block.id}
@@ -329,111 +355,47 @@ export default function VirtualKeyboard({
                         handleClear();
                       }
                     }}
-                    className={`h-24 sm:h-28 rounded-2xl font-black text-lg sm:text-xl border-2 flex flex-col items-center justify-center gap-1 shadow-md transition-all active:scale-95 ${
+                    className={`min-h-[64px] sm:min-h-[72px] rounded-2xl font-black text-base sm:text-lg border-2 flex flex-col items-center justify-center gap-0.5 shadow-md transition-all active:scale-95 ${
                       block.action === "speak"
                         ? "bg-teal-600 text-white border-teal-700 shadow-teal-600/30"
                         : block.action === "space"
-                        ? "bg-slate-800 text-white border-slate-900"
+                        ? isHighContrast ? "bg-slate-700 text-white border-slate-600" : "bg-slate-800 text-white border-slate-900"
                         : block.action === "backspace" || block.action === "clear"
-                        ? "bg-rose-50 hover:bg-rose-100 text-rose-800 border-rose-300"
+                        ? isHighContrast ? "bg-rose-950/60 text-rose-300 border-rose-800" : "bg-rose-50 text-rose-800 border-rose-300"
                         : block.action === "predict"
-                        ? "bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border-indigo-300"
-                        : isCurrentHighContrast
-                        ? "bg-neutral-900 border-yellow-400 text-yellow-300 hover:bg-yellow-400 hover:text-black"
+                        ? isHighContrast ? "bg-indigo-950/60 text-indigo-300 border-indigo-800" : "bg-indigo-50 text-indigo-900 border-indigo-300"
+                        : isHighContrast
+                        ? "bg-slate-800 border-slate-700 text-slate-100 hover:border-teal-500"
                         : "bg-slate-50 hover:bg-teal-50 border-slate-300 hover:border-teal-500 text-slate-900"
                     }`}
                   >
-                    {block.action === "speak" && <Volume2 className="w-5 h-5 text-white" />}
-                    {block.action === "space" && <Space className="w-5 h-5 text-white" />}
-                    {block.action === "backspace" && <Delete className="w-5 h-5 text-rose-700" />}
-                    {block.action === "predict" && <Sparkles className="w-5 h-5 text-indigo-700" />}
+                    {block.action === "speak" && <Volume2 className="w-4 h-4 text-white" />}
+                    {block.action === "space" && <Space className="w-4 h-4 text-white" />}
+                    {block.action === "backspace" && <Delete className="w-4 h-4 text-rose-400" />}
+                    {block.action === "predict" && <Sparkles className="w-4 h-4 text-indigo-400" />}
                     <span>{block.label}</span>
                   </button>
                 ))}
               </div>
             )}
           </div>
-        ) : layout === "Large-Key" ? (
-          // Large-Key paginated
-          <div className="space-y-3">
-            <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-              {largeKeySlice.map((letter) => (
-                <button
-                  key={letter}
-                  type="button"
-                  data-dwell="true"
-                  onClick={() => handleKeyPress(letter)}
-                  className={`h-20 sm:h-24 rounded-2xl font-black text-2xl sm:text-3xl border flex items-center justify-center shadow-md transition-all ${
-                    isCurrentHighContrast
-                      ? "bg-neutral-900 border-yellow-400 text-yellow-300 hover:bg-yellow-400 hover:text-black"
-                      : "bg-slate-50 hover:bg-teal-50 hover:border-teal-500 border-slate-300 text-slate-800"
-                  }`}
-                >
-                  {letter}
-                </button>
-              ))}
-            </div>
+        )}
 
-            <div className="flex items-center justify-between pt-1">
-              <button
-                type="button"
-                data-dwell="true"
-                onClick={() => setLargeKeyPage((p) => Math.max(0, p - 1))}
-                disabled={largeKeyPage === 0}
-                className="py-3 px-6 rounded-xl font-bold text-sm bg-slate-200 hover:bg-slate-300 text-slate-800 disabled:opacity-40 flex items-center gap-1.5"
-              >
-                <ChevronLeft className="w-4 h-4" />
-                <span>Prev Page</span>
-              </button>
-              <span className="font-bold text-sm text-slate-600">
-                Page {largeKeyPage + 1} of {totalLargePages}
-              </span>
-              <button
-                type="button"
-                data-dwell="true"
-                onClick={() => setLargeKeyPage((p) => Math.min(totalLargePages - 1, p + 1))}
-                disabled={largeKeyPage >= totalLargePages - 1}
-                className="py-3 px-6 rounded-xl font-bold text-sm bg-slate-200 hover:bg-slate-300 text-slate-800 disabled:opacity-40 flex items-center gap-1.5"
-              >
-                <span>Next Page</span>
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        ) : layout === "Simplified" ? (
-          // Simplified layout
+        {/* ── SIMPLIFIED VOWEL-FIRST LAYOUT ── */}
+        {layout === "Simplified" && (
           <div className="space-y-2">
             {simplifiedRows.map((row, rIdx) => (
-              <div key={rIdx} className="flex justify-center gap-1.5 sm:gap-2">
+              <div key={rIdx} className="flex justify-center gap-2">
                 {row.map((letter) => (
                   <button
                     key={letter}
                     type="button"
                     data-dwell="true"
                     onClick={() => handleKeyPress(letter)}
-                    className="flex-1 max-w-[72px] h-16 sm:h-20 rounded-xl font-black text-lg sm:text-xl border flex items-center justify-center shadow-sm bg-slate-100 hover:bg-teal-50 border-slate-300 text-slate-800"
-                  >
-                    {letter}
-                  </button>
-                ))}
-              </div>
-            ))}
-          </div>
-        ) : (
-          // Standard QWERTY / Spanish Rows
-          <div className="space-y-2">
-            {(script === "ES" ? spanishRows : qwertyRows).map((row, rIdx) => (
-              <div key={rIdx} className="flex justify-center gap-1.5 sm:gap-2">
-                {row.map((letter) => (
-                  <button
-                    key={letter}
-                    type="button"
-                    data-dwell="true"
-                    onClick={() => handleKeyPress(letter)}
-                    className={`flex-1 max-w-[72px] h-16 sm:h-20 rounded-xl font-black text-lg sm:text-xl border flex items-center justify-center shadow-sm transition-all ${
-                      isCurrentHighContrast
-                        ? "bg-black border-yellow-400 text-yellow-300 hover:bg-yellow-400 hover:text-black"
-                        : "bg-slate-100 hover:bg-teal-50 hover:border-teal-500 border-slate-300 text-slate-800"
+                    className={`flex-1 min-h-[58px] sm:min-h-[64px] max-w-[84px] rounded-2xl font-black text-xl border flex items-center justify-center shadow-sm ${
+                      isHighContrast
+                        ? "bg-slate-800 hover:bg-teal-900/60 border-slate-700 text-slate-100"
+                        : "bg-slate-50 hover:bg-teal-50 border-slate-300 text-slate-800"
                     }`}
                   >
                     {letter}
@@ -444,88 +406,105 @@ export default function VirtualKeyboard({
           </div>
         )}
 
-        {/* 4. ACTIONS & PUNCTUATION ROW (FOR STANDARD/QWERTY LAYOUTS) */}
+        {/* 4. INTEGRATED ACTIONS & PUNCTUATION ROW (FOR QWERTY & SIMPLIFIED) */}
         {layout !== "4x3-Grid" && (
-          <div className="pt-2 grid grid-cols-2 sm:grid-cols-8 gap-2">
+          <div className="pt-2 grid grid-cols-4 sm:grid-cols-12 gap-2">
+            {/* Numbers Toggle */}
             <button
               type="button"
               data-dwell="true"
               onClick={() => setShowNumbers(!showNumbers)}
-              className="h-16 sm:h-18 rounded-xl font-bold text-xs sm:text-sm bg-slate-200 hover:bg-slate-300 text-slate-800 flex items-center justify-center gap-1 shadow-sm border border-slate-300"
+              className={`min-h-[58px] sm:min-h-[62px] rounded-2xl font-bold text-xs sm:text-sm border flex items-center justify-center gap-1 shadow-sm ${
+                isHighContrast
+                  ? "bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700"
+                  : "bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300"
+              }`}
             >
               <Hash className="w-4 h-4" />
               <span>{showNumbers ? "ABC" : "123"}</span>
             </button>
 
+            {/* Quick Punctuation Keys */}
+            {punctKeys.map((p) => (
+              <button
+                key={p}
+                type="button"
+                data-dwell="true"
+                onClick={() => handleKeyPress(p)}
+                className={`min-h-[58px] sm:min-h-[62px] rounded-2xl font-black text-xl border flex items-center justify-center shadow-sm ${
+                  isHighContrast
+                    ? "bg-slate-800 hover:bg-teal-900/60 text-slate-100 border-slate-700"
+                    : "bg-slate-100 hover:bg-teal-50 text-slate-800 border-slate-300"
+                }`}
+              >
+                {p}
+              </button>
+            ))}
+
+            {/* SPACE (Wide Key) */}
             <button
               type="button"
               data-dwell="true"
               onClick={handleSpace}
-              className="col-span-2 sm:col-span-3 h-16 sm:h-18 rounded-xl font-black text-sm sm:text-base bg-teal-600 hover:bg-teal-700 text-white flex items-center justify-center gap-2 shadow-md active:scale-95"
+              className={`col-span-2 sm:col-span-3 min-h-[58px] sm:min-h-[62px] rounded-2xl font-black text-sm sm:text-base flex items-center justify-center gap-2 shadow-md active:scale-95 ${
+                isHighContrast
+                  ? "bg-teal-600 hover:bg-teal-700 text-white border border-teal-500"
+                  : "bg-teal-600 hover:bg-teal-700 text-white"
+              }`}
             >
               <Space className="w-5 h-5" />
               <span>SPACE</span>
             </button>
 
+            {/* BACKSPACE */}
             <button
               type="button"
               data-dwell="true"
               onClick={handleBackspace}
               disabled={!activeText}
-              className="h-16 sm:h-18 rounded-xl font-bold text-xs sm:text-sm bg-slate-200 hover:bg-red-50 hover:text-red-700 hover:border-red-300 border border-slate-300 text-slate-800 disabled:opacity-40 flex items-center justify-center gap-1 shadow-sm"
+              className={`min-h-[58px] sm:min-h-[62px] rounded-2xl font-bold text-xs sm:text-sm border disabled:opacity-30 flex items-center justify-center gap-1 shadow-sm ${
+                isHighContrast
+                  ? "bg-slate-800 hover:bg-rose-950/60 text-rose-300 border-slate-700"
+                  : "bg-slate-100 hover:bg-rose-50 hover:text-rose-700 border-slate-300 text-slate-800"
+              }`}
             >
               <Delete className="w-4 h-4" />
               <span>BKSP</span>
             </button>
 
-            <button
-              type="button"
-              data-dwell="true"
-              onClick={handleDeleteWord}
-              disabled={!activeText}
-              className="h-16 sm:h-18 rounded-xl font-bold text-xs bg-slate-200 hover:bg-red-50 hover:text-red-700 hover:border-red-300 border border-slate-300 text-slate-800 disabled:opacity-40 flex items-center justify-center shadow-sm"
-            >
-              DEL WORD
-            </button>
-
+            {/* UNDO */}
             <button
               type="button"
               data-dwell="true"
               onClick={handleUndo}
               disabled={undoStack.length === 0}
-              className="h-16 sm:h-18 rounded-xl font-bold text-xs bg-slate-200 hover:bg-slate-300 border border-slate-300 text-slate-800 disabled:opacity-40 flex items-center justify-center gap-1 shadow-sm"
+              className={`min-h-[58px] sm:min-h-[62px] rounded-2xl font-bold text-xs border disabled:opacity-30 flex items-center justify-center gap-1 shadow-sm ${
+                isHighContrast
+                  ? "bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700"
+                  : "bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300"
+              }`}
             >
               <RotateCcw className="w-3.5 h-3.5" />
               <span>UNDO</span>
             </button>
 
+            {/* CLEAR */}
             <button
               type="button"
               data-dwell="true"
               onClick={handleClear}
               disabled={!activeText}
-              className="h-16 sm:h-18 rounded-xl font-bold text-xs bg-slate-200 hover:bg-red-100 hover:text-red-700 border border-slate-300 text-slate-800 disabled:opacity-40 flex items-center justify-center gap-1 shadow-sm"
+              className={`min-h-[58px] sm:min-h-[62px] rounded-2xl font-bold text-xs border disabled:opacity-30 flex items-center justify-center gap-1 shadow-sm ${
+                isHighContrast
+                  ? "bg-slate-800 hover:bg-rose-950/60 text-rose-300 border-slate-700"
+                  : "bg-slate-100 hover:bg-rose-100 hover:text-rose-700 border-slate-300 text-slate-800"
+              }`}
             >
               <Trash2 className="w-3.5 h-3.5" />
               <span>CLEAR</span>
             </button>
           </div>
         )}
-
-        {/* Quick Punctuation row */}
-        <div className="flex justify-center gap-2 pt-1">
-          {punctRow.map((p) => (
-            <button
-              key={p}
-              type="button"
-              data-dwell="true"
-              onClick={() => handleKeyPress(p)}
-              className="w-12 h-14 rounded-xl font-black text-lg bg-slate-100 hover:bg-teal-50 border border-slate-300 text-slate-800 flex items-center justify-center shadow-sm"
-            >
-              {p}
-            </button>
-          ))}
-        </div>
       </div>
     </div>
   );

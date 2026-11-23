@@ -128,7 +128,7 @@ export default function PredictionBar({
   return (
     <div className={`p-3 rounded-2xl border transition-all ${
       isHighContrast
-        ? "bg-black border-yellow-400 text-yellow-300"
+        ? "bg-slate-900 border-slate-700 text-slate-100 shadow-md"
         : "bg-teal-900 text-white border-teal-700 shadow-md"
     }`}>
       {/* Header bar */}
@@ -141,7 +141,7 @@ export default function PredictionBar({
 
         <div className="flex items-center gap-2">
           <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1 ${
-            source === "gemini" ? "bg-teal-700 text-teal-100" : "bg-slate-700 text-slate-200"
+            source === "gemini" ? "bg-teal-700 text-teal-100" : isHighContrast ? "bg-slate-800 text-slate-300 border border-slate-700" : "bg-slate-700 text-slate-200"
           }`}>
             <Cpu className="w-3 h-3" />
             <span>{source === "gemini" ? "Gemini 2.5 Flash" : "Local Predictor"}</span>
@@ -165,7 +165,7 @@ export default function PredictionBar({
             key={idx}
             className={`p-3.5 rounded-xl border flex flex-col justify-between gap-3 ${
               isHighContrast
-                ? "bg-neutral-900 border-yellow-400 text-yellow-300"
+                ? "bg-slate-800 border-slate-700 text-slate-100"
                 : "bg-teal-800/80 border-teal-600/60 text-white"
             }`}
           >
@@ -178,7 +178,11 @@ export default function PredictionBar({
                 type="button"
                 data-dwell="true"
                 onClick={() => onUseSentence(sentence)}
-                className="flex-1 py-2 px-2.5 rounded-lg font-bold text-xs bg-teal-500 hover:bg-teal-400 text-teal-950 flex items-center justify-center gap-1 shadow-sm transition-all"
+                className={`flex-1 py-2 px-2.5 rounded-lg font-bold text-xs flex items-center justify-center gap-1 shadow-sm transition-all ${
+                  isHighContrast
+                    ? "bg-teal-600 hover:bg-teal-500 text-white"
+                    : "bg-teal-500 hover:bg-teal-400 text-teal-950"
+                }`}
                 title="Replace current text with this sentence"
               >
                 <span>Use Sentence</span>
@@ -189,7 +193,11 @@ export default function PredictionBar({
                 type="button"
                 data-dwell="true"
                 onClick={() => onAppendSentence(sentence)}
-                className="py-2 px-2.5 rounded-lg font-bold text-xs bg-teal-700 hover:bg-teal-600 text-white flex items-center justify-center gap-1 border border-teal-600 transition-all"
+                className={`py-2 px-2.5 rounded-lg font-bold text-xs flex items-center justify-center gap-1 border transition-all ${
+                  isHighContrast
+                    ? "bg-slate-700 hover:bg-slate-600 text-slate-200 border-slate-600"
+                    : "bg-teal-700 hover:bg-teal-600 text-white border-teal-600"
+                }`}
                 title="Append to current text"
               >
                 <Plus className="w-3.5 h-3.5" />
