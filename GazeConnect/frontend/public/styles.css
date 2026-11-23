@@ -621,12 +621,20 @@ body::selection {
   pointer-events: none;
 }
 
+.pointer-events-auto {
+  pointer-events: auto;
+}
+
 .\!visible {
   visibility: visible !important;
 }
 
 .visible {
   visibility: visible;
+}
+
+.static {
+  position: static;
 }
 
 .fixed {
@@ -667,6 +675,10 @@ body::selection {
 
 .bottom-4 {
   bottom: 1rem;
+}
+
+.left-0 {
+  left: 0px;
 }
 
 .left-1\.5 {
@@ -735,6 +747,10 @@ body::selection {
 
 .z-50 {
   z-index: 50;
+}
+
+.z-\[9999\] {
+  z-index: 9999;
 }
 
 .col-span-2 {

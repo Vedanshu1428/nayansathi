@@ -91,6 +91,9 @@ export default function GazeProvider({ children }: { children: React.ReactNode }
     })
   );
 
+  // Throttling ref to keep React state calm (10 FPS for React diagnostics, 60 FPS for direct DOM cursor)
+  const lastStateUpdateRef = useRef<number>(0);
+
   // Sync mirrorX to featureExtractor module & persistence
   const setMirrorX = useCallback((enabled: boolean) => {
     setMirrorXState(enabled);
@@ -142,7 +145,6 @@ export default function GazeProvider({ children }: { children: React.ReactNode }
   // Process eye features into gaze point & dwell
   const handleFeaturesUpdate = useCallback(
     (features: EyeFeatures) => {
-      setLatestEyeFeatures(features);
       if (interactionMode !== "gaze") return;
       if (typeof window === "undefined") return;
       const screenW = window.innerWidth;
@@ -185,21 +187,44 @@ export default function GazeProvider({ children }: { children: React.ReactNode }
         };
       }
 
-      setDwellProgress(dwellState.dwellProgress);
-      setIsDwellCoolingDown(dwellState.isCoolingDown);
-      setBlinkProgress(dwellState.blinkProgress);
-      setIsBlinkHolding(dwellState.isBlinkHolding);
+      // 1. FAST PATH (60 FPS): Dispatch custom event for direct DOM transform update (bypasses React virtual DOM)
+      window.dispatchEvent(
+        new CustomEvent("gazeconnect_frame", {
+          detail: {
+            x: finalX,
+            y: finalY,
+            rawX: raw.x,
+            rawY: raw.y,
+            dwellProgress: dwellState.dwellProgress,
+            blinkProgress: dwellState.blinkProgress,
+            isBlinkHolding: dwellState.isBlinkHolding,
+            isCoolingDown: dwellState.isCoolingDown,
+            status: features.status,
+            isCalibrated: raw.isCalibrated,
+          },
+        })
+      );
 
-      setGazePoint({
-        x: finalX,
-        y: finalY,
-        rawX: raw.x,
-        rawY: raw.y,
-        timestamp: features.timestamp,
-        confidence: features.status === "ready" ? 1.0 : 0.2,
-        status: features.status,
-        isCalibrated: raw.isCalibrated,
-      });
+      // 2. SLOW PATH (Throttled to 10 FPS / 100ms): Update React state for diagnostic meters, badges, and dev panels
+      const now = performance.now();
+      if (now - lastStateUpdateRef.current >= 100) {
+        lastStateUpdateRef.current = now;
+        setLatestEyeFeatures(features);
+        setDwellProgress(dwellState.dwellProgress);
+        setIsDwellCoolingDown(dwellState.isCoolingDown);
+        setBlinkProgress(dwellState.blinkProgress);
+        setIsBlinkHolding(dwellState.isBlinkHolding);
+        setGazePoint({
+          x: finalX,
+          y: finalY,
+          rawX: raw.x,
+          rawY: raw.y,
+          timestamp: features.timestamp,
+          confidence: features.status === "ready" ? 1.0 : 0.2,
+          status: features.status,
+          isCalibrated: raw.isCalibrated,
+        });
+      }
     },
     [interactionMode, calibrationModel]
   );

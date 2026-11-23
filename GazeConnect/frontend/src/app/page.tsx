@@ -26,6 +26,7 @@ export default function LandingPage() {
 
   const handleSimulateSpeak = () => {
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel(); // Clear any hung Chromium audio queues
       setIsSpeakingSimulation(true);
       const utterance = new SpeechSynthesisUtterance(simulatedText);
       utterance.onend = () => setIsSpeakingSimulation(false);

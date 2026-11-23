@@ -1,12 +1,12 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { GazePoint, TrackingStatus, SelectionMode, CURSOR_SPEED_PRESETS } from "@/lib/gaze/types";
 import { Sliders, FlipHorizontal, AlertCircle } from "lucide-react";
 
 interface GazeCursorProps {
   gazePoint: GazePoint | null;
-  dwellProgress: number;       // 0.0 to 1.0
+  dwellProgress: number; // 0.0 to 1.0 (throttled fallback)
   isCoolingDown: boolean;
   status: TrackingStatus;
   visible?: boolean;
@@ -21,7 +21,7 @@ interface GazeCursorProps {
   onSelectionModeChange: (mode: SelectionMode) => void;
   blinkHoldMs: number;
   onBlinkHoldMsChange: (ms: number) => void;
-  blinkProgress: number;         // 0.0 to 1.0
+  blinkProgress: number; // 0.0 to 1.0
   isBlinkHolding: boolean;
   cursorSpeedPresetIndex: number; // 0=Very Slow, 1=Slow/Balanced, 2=Normal
   onCursorSpeedPresetChange: (index: number) => void;
@@ -29,9 +29,9 @@ interface GazeCursorProps {
 
 export default function GazeCursor({
   gazePoint,
-  dwellProgress,
-  isCoolingDown,
-  status,
+  dwellProgress: propDwellProgress,
+  isCoolingDown: propIsCoolingDown,
+  status: propStatus,
   visible = true,
   isCalibrated = true,
   mirrorX = true,
@@ -44,34 +44,118 @@ export default function GazeCursor({
   onSelectionModeChange,
   blinkHoldMs,
   onBlinkHoldMsChange,
-  blinkProgress,
-  isBlinkHolding,
+  blinkProgress: propBlinkProgress,
+  isBlinkHolding: propIsBlinkHolding,
   cursorSpeedPresetIndex,
   onCursorSpeedPresetChange,
 }: GazeCursorProps) {
   const [showTuning, setShowTuning] = useState(false);
 
-  if (!visible || !gazePoint) return null;
+  // Direct DOM references for 60 FPS zero-lag rendering without triggering React re-renders
+  const cursorContainerRef = useRef<HTMLDivElement>(null);
+  const dwellCircleRef = useRef<SVGCircleElement>(null);
+  const blinkCircleRef = useRef<SVGCircleElement>(null);
+  const centerDotRef = useRef<SVGCircleElement>(null);
+  const cooldownBadgeRef = useRef<HTMLDivElement>(null);
+  const blinkBadgeRef = useRef<HTMLDivElement>(null);
+  const holdBadgeRef = useRef<HTMLDivElement>(null);
 
-  // SVG circle calculations
   const radius = 22;
   const circumference = 2 * Math.PI * radius;
-  const strokeDashoffset = circumference * (1 - dwellProgress);
+  const blinkRadius = 28;
+  const blinkCircumference = 2 * Math.PI * blinkRadius;
 
-  // Status-based colors
-  // Flash green when blink fires (blinkProgress >= 1.0), blue during cooldown, amber if uncalibrated, teal otherwise
-  const cursorColor =
-    !isCalibrated
-      ? "#DC2626" // Red when calibration required
-      : status === "ready"
-      ? blinkProgress >= 1.0
-        ? "#22C55E" // Green flash on blink fire
-        : isCoolingDown
-        ? "#3B82F6" // Blue during cooldown
-        : "#0D9488" // Medical Teal
-      : status === "blink_ignored"
-      ? "#F59E0B"   // Amber for blink
-      : "#EF4444";  // Red for no face or error
+  // Listen to the high-frequency 60 FPS custom event for ultra-smooth pointer rendering
+  useEffect(() => {
+    const handleFrame = (e: Event) => {
+      const customEvent = e as CustomEvent<{
+        x: number;
+        y: number;
+        rawX: number;
+        rawY: number;
+        dwellProgress: number;
+        blinkProgress: number;
+        isBlinkHolding: boolean;
+        isCoolingDown: boolean;
+        status: TrackingStatus;
+        isCalibrated: boolean;
+      }>;
+      const detail = customEvent.detail;
+      if (!detail) return;
+
+      // 1. Position cursor via hardware-accelerated translate3d
+      if (cursorContainerRef.current) {
+        cursorContainerRef.current.style.transform = `translate3d(${detail.x}px, ${detail.y}px, 0) translate(-50%, -50%)`;
+      }
+
+      // 2. Update Dwell stroke progress
+      if (dwellCircleRef.current) {
+        if (detail.isCalibrated) {
+          const offset = circumference * (1 - Math.max(0, Math.min(1, detail.dwellProgress)));
+          dwellCircleRef.current.style.strokeDashoffset = `${offset}`;
+          dwellCircleRef.current.style.fill =
+            detail.dwellProgress > 0.95
+              ? detail.isCoolingDown
+                ? "#3B82F6"
+                : "#0D9488"
+              : "rgba(255, 255, 255, 0.4)";
+        } else {
+          dwellCircleRef.current.style.strokeDashoffset = `${circumference}`;
+        }
+      }
+
+      // 3. Update Blink-hold progress ring
+      if (blinkCircleRef.current) {
+        if (detail.isBlinkHolding && detail.isCalibrated) {
+          blinkCircleRef.current.style.display = "block";
+          const bOffset = blinkCircumference * (1 - Math.max(0, Math.min(1, detail.blinkProgress)));
+          blinkCircleRef.current.style.strokeDashoffset = `${bOffset}`;
+        } else {
+          blinkCircleRef.current.style.display = "none";
+        }
+      }
+
+      // 4. Update badge visibility directly on the DOM
+      if (cooldownBadgeRef.current) {
+        cooldownBadgeRef.current.style.display =
+          detail.isCalibrated && detail.isCoolingDown ? "block" : "none";
+      }
+      if (holdBadgeRef.current) {
+        holdBadgeRef.current.style.display =
+          detail.isCalibrated && detail.isBlinkHolding ? "block" : "none";
+      }
+      if (blinkBadgeRef.current) {
+        blinkBadgeRef.current.style.display =
+          detail.isCalibrated && detail.status === "blink_ignored" && !detail.isBlinkHolding
+            ? "block"
+            : "none";
+      }
+    };
+
+    window.addEventListener("gazeconnect_frame", handleFrame);
+    return () => {
+      window.removeEventListener("gazeconnect_frame", handleFrame);
+    };
+  }, [circumference, blinkCircumference]);
+
+  if (!visible) return null;
+
+  // Fallback initial position
+  const initialX = gazePoint ? gazePoint.x : typeof window !== "undefined" ? window.innerWidth / 2 : 500;
+  const initialY = gazePoint ? gazePoint.y : typeof window !== "undefined" ? window.innerHeight / 2 : 500;
+
+  // Status-based colors for static markup
+  const cursorColor = !isCalibrated
+    ? "#DC2626"
+    : propStatus === "ready"
+    ? propBlinkProgress >= 1.0
+      ? "#22C55E"
+      : propIsCoolingDown
+      ? "#3B82F6"
+      : "#0D9488"
+    : propStatus === "blink_ignored"
+    ? "#F59E0B"
+    : "#EF4444";
 
   const pillLabel =
     selectionMode === "hold_blink"
@@ -82,16 +166,16 @@ export default function GazeCursor({
 
   return (
     <>
-      {/* Floating Gaze Cursor Ring */}
+      {/* Floating Gaze Cursor Ring — Decoupled via Direct Ref + Hardware Transform */}
       <div
-        className="fixed pointer-events-none z-50 -translate-x-1/2 -translate-y-1/2"
+        ref={cursorContainerRef}
+        className="fixed top-0 left-0 pointer-events-none z-[9999]"
         style={{
-          left: `${gazePoint.x}px`,
-          top: `${gazePoint.y}px`,
-          willChange: "left, top",
+          transform: `translate3d(${initialX}px, ${initialY}px, 0) translate(-50%, -50%)`,
+          willChange: "transform",
         }}
       >
-        <svg width="60" height="60" viewBox="0 0 60 60" className="overflow-visible">
+        <svg width="60" height="60" viewBox="0 0 60 60" className="overflow-visible pointer-events-none">
           {/* Background circle */}
           <circle
             cx="30"
@@ -103,38 +187,39 @@ export default function GazeCursor({
           />
 
           {/* Blink-hold progress ring (amber, behind main ring) */}
-          {isBlinkHolding && isCalibrated && (
-            <circle
-              cx="30"
-              cy="30"
-              r={28}
-              fill="none"
-              stroke="#F59E0B"
-              strokeWidth="4"
-              strokeDasharray={2 * Math.PI * 28}
-              strokeDashoffset={2 * Math.PI * 28 * (1 - blinkProgress)}
-              strokeLinecap="round"
-              transform="rotate(-90 30 30)"
-            />
-          )}
+          <circle
+            ref={blinkCircleRef}
+            cx="30"
+            cy="30"
+            r={blinkRadius}
+            fill="none"
+            stroke="#F59E0B"
+            strokeWidth="4"
+            strokeDasharray={blinkCircumference}
+            strokeDashoffset={blinkCircumference * (1 - propBlinkProgress)}
+            strokeLinecap="round"
+            transform="rotate(-90 30 30)"
+            style={{ display: propIsBlinkHolding && isCalibrated ? "block" : "none" }}
+          />
 
           {/* Dwell Progress Ring */}
           <circle
+            ref={dwellCircleRef}
             cx="30"
             cy="30"
             r={radius}
-            fill={dwellProgress > 0.95 ? cursorColor : "rgba(255, 255, 255, 0.4)"}
+            fill={propDwellProgress > 0.95 ? cursorColor : "rgba(255, 255, 255, 0.4)"}
             stroke={cursorColor}
             strokeWidth="5"
             strokeDasharray={circumference}
-            strokeDashoffset={isCalibrated ? strokeDashoffset : circumference}
+            strokeDashoffset={isCalibrated ? circumference * (1 - propDwellProgress) : circumference}
             strokeLinecap="round"
             transform="rotate(-90 30 30)"
-            className="transition-all duration-75"
           />
 
           {/* Center Point */}
           <circle
+            ref={centerDotRef}
             cx="30"
             cy="30"
             r={4}
@@ -146,33 +231,43 @@ export default function GazeCursor({
 
         {/* Uncalibrated Status Badge — Parked at Center */}
         {!isCalibrated && (
-          <div className="absolute top-14 left-1/2 -translate-x-1/2 bg-red-600 text-white text-[10px] font-black px-2.5 py-1 rounded-full shadow-lg whitespace-nowrap flex items-center gap-1.5 animate-pulse border border-red-300">
+          <div className="absolute top-14 left-1/2 -translate-x-1/2 bg-red-600 text-white text-[10px] font-black px-2.5 py-1 rounded-full shadow-lg whitespace-nowrap flex items-center gap-1.5 animate-pulse border border-red-300 pointer-events-none">
             <AlertCircle className="w-3 h-3 text-white" />
             <span>CALIBRATION REQUIRED</span>
           </div>
         )}
 
         {/* Labels when calibrated */}
-        {isCalibrated && isCoolingDown && (
-          <div className="absolute top-14 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded shadow whitespace-nowrap">
-            COOLDOWN
-          </div>
-        )}
-        {isCalibrated && status === "blink_ignored" && !isBlinkHolding && (
-          <div className="absolute top-14 left-1/2 -translate-x-1/2 bg-amber-500 text-black text-[9px] font-bold px-1.5 py-0.5 rounded shadow whitespace-nowrap">
-            BLINK
-          </div>
-        )}
-        {/* HOLD label when eyes closed */}
-        {isCalibrated && isBlinkHolding && (
-          <div className="absolute top-14 left-1/2 -translate-x-1/2 bg-amber-500 text-black text-[9px] font-bold px-1.5 py-0.5 rounded shadow whitespace-nowrap">
-            HOLD
-          </div>
-        )}
+        <div
+          ref={cooldownBadgeRef}
+          style={{ display: isCalibrated && propIsCoolingDown ? "block" : "none" }}
+          className="absolute top-14 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded shadow whitespace-nowrap pointer-events-none"
+        >
+          COOLDOWN
+        </div>
+
+        <div
+          ref={blinkBadgeRef}
+          style={{
+            display:
+              isCalibrated && propStatus === "blink_ignored" && !propIsBlinkHolding ? "block" : "none",
+          }}
+          className="absolute top-14 left-1/2 -translate-x-1/2 bg-amber-500 text-black text-[9px] font-bold px-1.5 py-0.5 rounded shadow whitespace-nowrap pointer-events-none"
+        >
+          BLINK
+        </div>
+
+        <div
+          ref={holdBadgeRef}
+          style={{ display: isCalibrated && propIsBlinkHolding ? "block" : "none" }}
+          className="absolute top-14 left-1/2 -translate-x-1/2 bg-amber-500 text-black text-[9px] font-bold px-1.5 py-0.5 rounded shadow whitespace-nowrap pointer-events-none"
+        >
+          HOLD
+        </div>
       </div>
 
-      {/* Compact Floating Tuning Pill */}
-      <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-2">
+      {/* Compact Floating Tuning Pill — Interactive with pointer-events-auto */}
+      <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-2 pointer-events-auto">
         {showTuning && (
           <div className="p-4 rounded-2xl bg-white/95 backdrop-blur-md border border-slate-200 shadow-xl w-72 text-xs space-y-4">
             {/* Header */}
@@ -304,7 +399,7 @@ export default function GazeCursor({
               )}
             </div>
 
-            {/* Legacy smoothing (hidden from main UI but kept for internal reference) */}
+            {/* Advanced Beta */}
             <details className="text-[10px] text-slate-400">
               <summary className="cursor-pointer select-none">Advanced</summary>
               <div className="mt-2">

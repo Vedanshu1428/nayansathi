@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
+import { useGaze } from "@/components/gaze/GazeProvider";
 import {
   Eye,
   MousePointer,
@@ -22,15 +23,30 @@ interface NavbarProps {
 }
 
 export default function Navbar({
-  interactionMode = "gaze",
+  interactionMode: propInteractionMode,
   onToggleInteractionMode,
   isHighContrast = false,
   onToggleHighContrast,
 }: NavbarProps) {
   const pathname = usePathname();
+  let gazeCtx: ReturnType<typeof useGaze> | null = null;
+  try {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    gazeCtx = useGaze();
+  } catch {
+    gazeCtx = null;
+  }
+
   const [isOnline, setIsOnline] = useState<boolean>(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
-  const [currentMode, setCurrentMode] = useState<"gaze" | "mouse">(interactionMode);
+  const effectiveMode = gazeCtx?.interactionMode ?? propInteractionMode ?? "gaze";
+  const [currentMode, setCurrentMode] = useState<"gaze" | "mouse">(effectiveMode);
+
+  useEffect(() => {
+    if (gazeCtx?.interactionMode) {
+      setCurrentMode(gazeCtx.interactionMode);
+    }
+  }, [gazeCtx?.interactionMode]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -44,6 +60,9 @@ export default function Navbar({
       const savedMode = localStorage.getItem("gazeconnect_interaction_mode");
       if (savedMode === "gaze" || savedMode === "mouse") {
         setCurrentMode(savedMode);
+        if (gazeCtx?.setInteractionMode) {
+          gazeCtx.setInteractionMode(savedMode);
+        }
       }
 
       return () => {
@@ -51,10 +70,13 @@ export default function Navbar({
         window.removeEventListener("offline", handleOffline);
       };
     }
-  }, []);
+  }, [gazeCtx]);
 
   const handleModeSwitch = (mode: "gaze" | "mouse") => {
     setCurrentMode(mode);
+    if (gazeCtx?.setInteractionMode) {
+      gazeCtx.setInteractionMode(mode);
+    }
     if (typeof window !== "undefined") {
       localStorage.setItem("gazeconnect_interaction_mode", mode);
       window.dispatchEvent(new CustomEvent("gazeconnect_mode_changed", { detail: { mode } }));
