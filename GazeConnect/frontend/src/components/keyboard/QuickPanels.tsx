@@ -14,6 +14,11 @@ import {
   X,
   ShieldAlert,
   RotateCcw,
+  Mic,
+  MicOff,
+  Loader2,
+  MessageSquare,
+  Sparkles,
 } from "lucide-react";
 
 interface QuickPanelsProps {
@@ -54,6 +59,123 @@ export default function QuickPanels({
     { id: "1", name: "Dr. Evans (Physician)", relationship: "Doctor", phone: "+15559876543" },
     { id: "2", name: "Sarah (Primary Caregiver)", relationship: "Daughter", phone: "+15551234567" },
   ]);
+
+  // Caregiver Speech & Two-Way Replies State (Tab 4)
+  const [isListening, setIsListening] = useState(false);
+  const [caregiverSpeech, setCaregiverSpeech] = useState<string>("");
+  const [manualInput, setManualInput] = useState<string>("");
+  const [caregiverReplies, setCaregiverReplies] = useState<string[]>([]);
+  const [isLoadingReplies, setIsLoadingReplies] = useState(false);
+  const [speechError, setSpeechError] = useState<string | null>(null);
+  const recognitionRef = React.useRef<any>(null);
+
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {}
+      }
+    };
+  }, []);
+
+  const fetchCaregiverReplies = async (question: string) => {
+    if (!question.trim()) return;
+    setIsLoadingReplies(true);
+    setSpeechError(null);
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const res = await fetch(`${baseUrl}/api/ai/reply-suggestions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          spoken_question: question.trim(),
+          language: "en",
+        }),
+      });
+      if (!res.ok) {
+        throw new Error(`Server returned status ${res.status}`);
+      }
+      const data = await res.json();
+      if (data && Array.isArray(data.replies) && data.replies.length > 0) {
+        setCaregiverReplies(data.replies);
+      } else {
+        setCaregiverReplies(["Yes, definitely.", "No, not right now.", "I need a minute."]);
+      }
+    } catch (err) {
+      console.warn("Caregiver replies fallback triggered:", err);
+      const lower = question.toLowerCase();
+      if (lower.includes("water") || lower.includes("drink") || lower.includes("thirsty")) {
+        setCaregiverReplies(["Yes, please give me water.", "No, I am not thirsty.", "Just a small sip."]);
+      } else if (lower.includes("pain") || lower.includes("hurt")) {
+        setCaregiverReplies(["Yes, I am in pain.", "A little uncomfortable.", "No, I feel fine."]);
+      } else if (lower.includes("eat") || lower.includes("food") || lower.includes("hungry")) {
+        setCaregiverReplies(["Yes, I am hungry.", "Not right now, thank you.", "Maybe later."]);
+      } else {
+        setCaregiverReplies(["Yes, please.", "No, thank you.", "Please give me a moment."]);
+      }
+    } finally {
+      setIsLoadingReplies(false);
+    }
+  };
+
+  const toggleListening = () => {
+    if (isListening) {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {}
+      }
+      setIsListening(false);
+      return;
+    }
+
+    if (typeof window === "undefined") return;
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      setSpeechError("Speech recognition is not supported in this browser. Please type the question below.");
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = "en-US";
+
+      recognition.onstart = () => {
+        setIsListening(true);
+        setSpeechError(null);
+      };
+
+      recognition.onresult = (event: any) => {
+        const transcript = event.results[0]?.[0]?.transcript || "";
+        if (transcript) {
+          setCaregiverSpeech(transcript);
+          fetchCaregiverReplies(transcript);
+        }
+      };
+
+      recognition.onerror = (event: any) => {
+        if (event.error !== "no-speech") {
+          setSpeechError(`Microphone notice: ${event.error}`);
+        }
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (err: any) {
+      setSpeechError("Microphone access could not be started.");
+      setIsListening(false);
+    }
+  };
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -362,47 +484,195 @@ export default function QuickPanels({
   }
 
   /* -------------------------------------------------------------
-   * TAB 4: FACE-TO-FACE CONVERSATION MODE
+   * TAB 4: FACE-TO-FACE CONVERSATION & CAREGIVER SPEECH-TO-GAZE MODE
    * ------------------------------------------------------------- */
   return (
-    <div className={`p-8 sm:p-12 rounded-3xl border shadow-2xl flex flex-col items-center justify-between min-h-[440px] space-y-8 ${
+    <div className={`p-6 sm:p-8 rounded-3xl border shadow-2xl flex flex-col justify-between min-h-[500px] space-y-6 ${
       isHighContrast
         ? "bg-slate-900 border-slate-800 text-slate-100"
         : "bg-slate-950 text-white border-slate-800"
     }`}>
-      <div className="flex items-center gap-2 text-teal-400 text-xs font-bold uppercase tracking-widest">
-        <Users className="w-4 h-4" />
-        <span>Face-to-Face Listener Display (High-Visibility Across Room)</span>
-      </div>
+      {/* Top Bar: Listener Display Title & Caregiver Mic Controls */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+        <div className="flex items-center gap-2 text-teal-400 text-xs font-bold uppercase tracking-widest">
+          <Users className="w-4 h-4" />
+          <span>Face-to-Face & Two-Way Caregiver Assistant</span>
+        </div>
 
-      <div className="text-center font-black text-4xl sm:text-6xl lg:text-7xl text-teal-300 leading-tight max-w-4xl break-words">
-        {activeMessage || "WAITING FOR MESSAGE..."}
-      </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 w-full max-w-4xl">
-        {[
-          { label: "YES", color: "hover:bg-emerald-600" },
-          { label: "NO", color: "hover:bg-rose-600" },
-          { label: "WAIT", color: "hover:bg-amber-600" },
-          { label: "REPEAT", color: "hover:bg-teal-600" },
-        ].map((btn) => (
+        {/* Mic Listen Toggle & Text Fallback */}
+        <div className="flex items-center gap-2">
           <button
-            key={btn.label}
             type="button"
             data-dwell="true"
-            onClick={() => {
-              if (btn.label === "REPEAT") {
-                tts.repeatLast();
-              } else {
-                onSelectPhrase(btn.label);
-                tts.speak(btn.label);
-              }
-            }}
-            className={`h-24 sm:h-28 rounded-2xl font-black text-2xl sm:text-3xl bg-slate-800 ${btn.color} text-white border border-slate-700 shadow-xl transition-all flex items-center justify-center active:scale-95`}
+            onClick={toggleListening}
+            className={`px-4 py-2.5 rounded-2xl font-black text-sm flex items-center gap-2 shadow-lg transition-all ${
+              isListening
+                ? "bg-rose-600 hover:bg-rose-700 text-white animate-pulse"
+                : "bg-teal-600 hover:bg-teal-500 text-white shadow-teal-600/30"
+            }`}
           >
-            {btn.label}
+            {isListening ? (
+              <>
+                <MicOff className="w-4 h-4" />
+                <span>Listening... (Tap to Stop)</span>
+              </>
+            ) : (
+              <>
+                <Mic className="w-4 h-4" />
+                <span>Listen to Caregiver (Mic)</span>
+              </>
+            )}
           </button>
-        ))}
+        </div>
+      </div>
+
+      {/* Prominent Listener Message Display (Across-the-Room readability) */}
+      <div className="text-center py-2">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+          Patient Message to Room
+        </span>
+        <div className="font-black text-2xl sm:text-4xl lg:text-5xl text-teal-300 leading-tight max-w-4xl mx-auto break-words min-h-[48px] flex items-center justify-center">
+          {activeMessage || "WAITING FOR MESSAGE..."}
+        </div>
+      </div>
+
+      {/* Speech Recognition Error Notice if any */}
+      {speechError && (
+        <div className="p-3 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-200 text-xs flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          <span>{speechError}</span>
+        </div>
+      )}
+
+      {/* Caregiver Input & Speech Bubble */}
+      <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-3">
+        <div className="flex items-center justify-between text-xs font-bold text-slate-300">
+          <span className="flex items-center gap-1.5 text-teal-400">
+            <MessageSquare className="w-4 h-4" />
+            <span>Caregiver Question / Topic:</span>
+          </span>
+          <span className="text-[11px] text-slate-500">Auto-generates 3 fast 1-dwell replies</span>
+        </div>
+
+        {/* Display recognized question or placeholder */}
+        {caregiverSpeech ? (
+          <div className="p-3.5 rounded-xl bg-teal-950/60 border border-teal-500/30 text-teal-100 flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-teal-500/20 flex items-center justify-center text-teal-300 flex-shrink-0">
+              <Users className="w-4 h-4" />
+            </div>
+            <div className="flex-1">
+              <span className="text-[10px] font-black uppercase tracking-wider text-teal-400 block">Caregiver Said:</span>
+              <p className="text-base sm:text-lg font-bold">&ldquo;{caregiverSpeech}&rdquo;</p>
+            </div>
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={manualInput}
+              onChange={(e) => setManualInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && manualInput.trim()) {
+                  setCaregiverSpeech(manualInput.trim());
+                  fetchCaregiverReplies(manualInput.trim());
+                  setManualInput("");
+                }
+              }}
+              placeholder="Caregiver: Click 'Listen' above or type question here..."
+              className="flex-1 px-4 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-teal-500"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                if (manualInput.trim()) {
+                  setCaregiverSpeech(manualInput.trim());
+                  fetchCaregiverReplies(manualInput.trim());
+                  setManualInput("");
+                }
+              }}
+              className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-teal-400 font-bold text-sm"
+            >
+              Ask
+            </button>
+          </div>
+        )}
+
+        {/* Tailored 1-Dwell Replies generated by Gemini / Fallback */}
+        {isLoadingReplies && (
+          <div className="py-4 flex items-center justify-center gap-2 text-teal-400 text-sm font-bold">
+            <Loader2 className="w-5 h-5 animate-spin" />
+            <span>Analyzing caregiver question & generating quick responses...</span>
+          </div>
+        )}
+
+        {!isLoadingReplies && caregiverReplies.length > 0 && (
+          <div className="space-y-2 pt-1">
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] font-black uppercase tracking-wider text-teal-400 flex items-center gap-1">
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Suggested Patient Answers (1-Dwell to Speak)</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => setCaregiverReplies([])}
+                className="text-[11px] text-slate-500 hover:text-slate-300"
+              >
+                Dismiss
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              {caregiverReplies.map((reply, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  data-dwell="true"
+                  onClick={() => {
+                    onSelectPhrase(reply);
+                    tts.speak(reply);
+                    LocalStore.appendHistory(reply);
+                  }}
+                  className="p-4 min-h-[68px] rounded-2xl bg-teal-950/70 hover:bg-teal-600 border border-teal-500/40 hover:border-teal-400 text-white font-bold text-base text-left shadow-lg transition-all flex items-center justify-between active:scale-95 group"
+                >
+                  <span className="line-clamp-2">{reply}</span>
+                  <Volume2 className="w-4 h-4 ml-2 opacity-70 group-hover:opacity-100 flex-shrink-0" />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Oversized High-Visibility Quick Reaction Buttons */}
+      <div className="space-y-2">
+        <label className="text-[11px] font-black uppercase tracking-wider text-slate-400 block">
+          Instant Core Responses
+        </label>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 w-full">
+          {[
+            { label: "YES", color: "hover:bg-emerald-600 bg-emerald-950/50 border-emerald-600/50 text-emerald-200 hover:text-white" },
+            { label: "NO", color: "hover:bg-rose-600 bg-rose-950/50 border-rose-600/50 text-rose-200 hover:text-white" },
+            { label: "WAIT", color: "hover:bg-amber-600 bg-amber-950/50 border-amber-600/50 text-amber-200 hover:text-white" },
+            { label: "REPEAT", color: "hover:bg-teal-600 bg-teal-950/50 border-teal-600/50 text-teal-200 hover:text-white" },
+          ].map((btn) => (
+            <button
+              key={btn.label}
+              type="button"
+              data-dwell="true"
+              onClick={() => {
+                if (btn.label === "REPEAT") {
+                  tts.repeatLast();
+                } else {
+                  onSelectPhrase(btn.label);
+                  tts.speak(btn.label);
+                  LocalStore.appendHistory(btn.label);
+                }
+              }}
+              className={`h-20 sm:h-24 rounded-2xl font-black text-2xl sm:text-3xl border shadow-xl transition-all flex items-center justify-center active:scale-95 ${btn.color}`}
+            >
+              {btn.label}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

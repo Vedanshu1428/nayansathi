@@ -80,6 +80,18 @@ export default function CommunicatePage() {
       ) {
         setActiveTab(tabParam as "emergency" | "phrases" | "facetoface");
       }
+
+      // Hands-Free Triple-Blink Emergency SOS Event Listener
+      const handleTripleBlinkSOS = () => {
+        setActiveTab("emergency");
+        tts.speak("I need urgent help");
+        LocalStore.appendHistory("EMERGENCY SOS: I need urgent help (Triple-Blink Triggered)");
+      };
+
+      window.addEventListener("gazeconnect_sos_triple_blink", handleTripleBlinkSOS);
+      return () => {
+        window.removeEventListener("gazeconnect_sos_triple_blink", handleTripleBlinkSOS);
+      };
     }
   }, []);
 
@@ -399,6 +411,31 @@ export default function CommunicatePage() {
                 {calibrationScore !== null ? `Piecewise Hybrid (${calibrationScore}%)` : "Uncalibrated Center Lock"}
               </span>
             </div>
+          </section>
+        )}
+
+        {/* Real-Time Ocular Fatigue Guardian Alert */}
+        {latestEyeFeatures?.fatigueLevel === "high" && (
+          <section className="px-5 py-3.5 rounded-2xl bg-amber-500/10 border-2 border-amber-500/40 text-amber-900 dark:text-amber-200 flex flex-wrap items-center justify-between gap-3 animate-in fade-in">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-amber-500 text-slate-950 font-black rounded-xl text-xs">
+                REST
+              </div>
+              <div>
+                <h4 className="font-bold text-sm">Ocular Fatigue Detected (Eyelid Droop / High Blink Rate)</h4>
+                <p className="text-xs text-amber-800 dark:text-amber-300">
+                  Your eyes have been working hard. Taking a 2-minute relaxation pause prevents ocular muscle strain.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              data-dwell="true"
+              onClick={() => setInteractionMode("mouse")}
+              className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 shadow transition-all"
+            >
+              Pause Gaze Tracking
+            </button>
           </section>
         )}
 

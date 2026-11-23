@@ -43,6 +43,31 @@ class SentencePredictResponse(BaseModel):
     )
 
 
+class CaregiverReplyRequest(BaseModel):
+    spoken_question: str = Field(
+        description="Spoken question or statement from the caregiver",
+        examples=["Are you feeling dizzy or just thirsty?", "Do you want to lie down?"],
+    )
+    language: Literal["en", "hi", "es", "zh"] = Field(
+        default="en",
+        description="Language code for the generated patient replies",
+    )
+    patient_context: Optional[str] = Field(
+        default="",
+        description="Optional background context on patient condition or environment",
+    )
+
+
+class CaregiverReplyResponse(BaseModel):
+    replies: List[str] = Field(
+        description="Up to 3 tailored, direct 1-dwell replies for the patient",
+        max_length=3,
+    )
+    source: Literal["gemini", "fallback"] = Field(
+        description="Generation source: 'gemini' or 'fallback'",
+    )
+
+
 class HealthResponse(BaseModel):
     status: str = "healthy"
     service: str = "gazeconnect-backend"

@@ -46,6 +46,22 @@ let isBaselineLocked = false;
 
 let lastValidFeatures: EyeFeatures | null = null;
 
+// ── Triple-Blink Emergency SOS Tracker ──
+// 3 deliberate blinks within 1.8s (each 120ms–450ms, gap < 450ms)
+interface CompletedBlink {
+  start: number;
+  end: number;
+  duration: number;
+}
+let recentBlinks: CompletedBlink[] = [];
+let prevEyesClosed = false;
+let blinkEntryTime: number | null = null;
+
+// ── Rolling Ocular Fatigue Monitor (30s window) ──
+let rollingBlinkTimestamps: number[] = [];
+let droopStartTime: number | null = null;
+let currentFatigueLevel: "fresh" | "mild" | "high" = "fresh";
+
 // 5-frame median rolling history for fused gaze coordinates
 let historyFusedGazeX: number[] = [];
 let historyFusedGazeY: number[] = [];
@@ -438,6 +454,68 @@ export function extractEyeFeatures(
 
   const status: TrackingStatus = isBlinking ? "blink_ignored" : "ready";
 
+  // ── 7. Triple-Blink SOS & Fatigue Guardian Detection ──
+  let isTripleBlinkSOS = false;
+
+  // Detect blink transitions: Eyes closed -> open
+  if (isEyesClosed && !prevEyesClosed) {
+    blinkEntryTime = timestamp;
+  } else if (!isEyesClosed && prevEyesClosed && blinkEntryTime !== null) {
+    const blinkDuration = timestamp - blinkEntryTime;
+    // Intentional deliberate blink range: 120ms to 450ms
+    if (blinkDuration >= 120 && blinkDuration <= 450) {
+      recentBlinks.push({ start: blinkEntryTime, end: timestamp, duration: blinkDuration });
+      rollingBlinkTimestamps.push(timestamp);
+
+      // Keep only blinks within last 1800ms
+      recentBlinks = recentBlinks.filter((b) => timestamp - b.start <= 1800);
+
+      // Verify triple-blink pattern: exactly 3 blinks with inter-blink gap < 450ms
+      if (recentBlinks.length >= 3) {
+        const b1 = recentBlinks[recentBlinks.length - 3];
+        const b2 = recentBlinks[recentBlinks.length - 2];
+        const b3 = recentBlinks[recentBlinks.length - 1];
+        const gap1 = b2.start - b1.end;
+        const gap2 = b3.start - b2.end;
+        if (gap1 < 450 && gap2 < 450) {
+          isTripleBlinkSOS = true;
+          recentBlinks = []; // Reset after firing
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent("gazeconnect_sos_triple_blink"));
+          }
+        }
+      }
+    }
+    blinkEntryTime = null;
+  }
+  prevEyesClosed = isEyesClosed;
+
+  // Prune rolling blink timestamps (> 30s)
+  rollingBlinkTimestamps = rollingBlinkTimestamps.filter((t) => timestamp - t <= 30000);
+  const blinksPerMinute = rollingBlinkTimestamps.length * 2; // Extrapolate 30s to 60s
+
+  // Eyelid droop detection (avgEAR hovering between 0.72x and 0.85x of baseline)
+  const isDrooping =
+    averageEAR >= openEyeEARBaseline * 0.72 &&
+    averageEAR <= openEyeEARBaseline * 0.85;
+
+  if (isDrooping) {
+    if (droopStartTime === null) droopStartTime = timestamp;
+    const droopDuration = timestamp - droopStartTime;
+    if (droopDuration > 3000 || blinksPerMinute > 32) {
+      currentFatigueLevel = "high";
+    } else if (droopDuration > 1500 || blinksPerMinute > 24) {
+      currentFatigueLevel = "mild";
+    }
+  } else {
+    droopStartTime = null;
+    if (blinksPerMinute < 18) {
+      currentFatigueLevel = "fresh";
+    } else if (blinksPerMinute < 26) {
+      currentFatigueLevel = "mild";
+    }
+  }
+
   const features: EyeFeatures = {
     timestamp,
     status,
@@ -456,6 +534,9 @@ export function extractEyeFeatures(
     isBlinking,
     isEyesClosed,
     closedDurationMs,
+    fatigueLevel: currentFatigueLevel,
+    blinksPerMinute,
+    isTripleBlinkSOS,
     headPose,
     featureVector,
   };

@@ -7,7 +7,12 @@ Provides instantaneous deterministic rule-based fallback when offline or API key
 import logging
 from typing import List, Tuple
 from app.config import settings
-from app.schemas import SentencePredictRequest, SentencePredictResponse
+from app.schemas import (
+    SentencePredictRequest,
+    SentencePredictResponse,
+    CaregiverReplyRequest,
+    CaregiverReplyResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -215,3 +220,102 @@ Provide 3 concise, polite sentence options:"""
             suggestions=get_deterministic_fallback(req),
             source="fallback",
         )
+
+
+def get_caregiver_fallback(req: CaregiverReplyRequest) -> List[str]:
+    """Generates direct, helpful replies when offline or Gemini is unconfigured."""
+    q = req.spoken_question.lower()
+    lang = req.language
+
+    if "water" in q or "thirsty" in q or "drink" in q:
+        if lang == "hi":
+            return ["हाँ, मुझे पानी चाहिए।", "नहीं, मुझे प्यास नहीं है।", "थोड़ा रुकिए कृपया।"]
+        elif lang == "es":
+            return ["Sí, por favor un poco de agua.", "No tengo sed ahora.", "Espera un momento por favor."]
+        elif lang == "zh":
+            return ["是的，我想喝水。", "我不渴，谢谢。", "请稍等一下。"]
+        return ["Yes, I would like water please.", "No, I am not thirsty right now.", "Please wait a moment."]
+
+    if "pain" in q or "hurt" in q or "uncomfortable" in q:
+        if lang == "hi":
+            return ["हाँ, मुझे दर्द हो रहा है।", "नहीं, मैं ठीक हूँ।", "कृपया मेरी स्थिति बदलें।"]
+        elif lang == "es":
+            return ["Sí, siento dolor por favor ayuda.", "No, estoy cómodo ahora.", "Por favor ajusta mi posición."]
+        elif lang == "zh":
+            return ["是的，我很疼，请帮助我。", "不，我现在感觉还好。", "请帮我调整姿势。"]
+        return ["Yes, I am in pain, please help.", "No, I am comfortable right now.", "Please adjust my position."]
+
+    if "hungry" in q or "eat" in q or "food" in q:
+        if lang == "hi":
+            return ["हाँ, मुझे भूख लगी है।", "नहीं, अभी खाना नहीं चाहिए।", "थोड़ी देर बाद कृपया।"]
+        elif lang == "es":
+            return ["Sí, tengo hambre por favor.", "No, no tengo hambre ahora.", "Más tarde por favor."]
+        elif lang == "zh":
+            return ["是的，我饿了想吃东西。", "不，我现在不饿。", "晚一点再说。"]
+        return ["Yes, I am hungry, please bring food.", "No, I am not hungry right now.", "A little later, please."]
+
+    # General questions
+    if lang == "hi":
+        return ["हाँ, कृपया।", "नहीं, धन्यवाद।", "मुझे थोड़ा समय चाहिए।"]
+    elif lang == "es":
+        return ["Sí, por favor.", "No, gracias.", "Necesito un momento."]
+    elif lang == "zh":
+        return ["是的，请帮我。", "不，谢谢。", "我需要一点时间。"]
+    return ["Yes, please.", "No, thank you.", "I need a moment."]
+
+
+async def generate_caregiver_replies(req: CaregiverReplyRequest) -> CaregiverReplyResponse:
+    """
+    Analyzes caregiver speech and returns 3 direct, tailored 1-dwell replies for the patient.
+    """
+    if not settings.GEMINI_API_KEY or settings.GEMINI_API_KEY.startswith("your_"):
+        logger.info("GEMINI_API_KEY not configured. Using caregiver fallback.")
+        return CaregiverReplyResponse(
+            replies=get_caregiver_fallback(req),
+            source="fallback",
+        )
+
+    try:
+        from google import genai
+
+        client = genai.Client(api_key=settings.GEMINI_API_KEY)
+
+        prompt = f"""Language: {req.language}
+Caregiver asked/said: "{req.spoken_question}"
+Patient Context: {req.patient_context or 'ALS/motor impaired patient communicating with eyes'}
+
+Generate exactly 3 short, direct, 1-dwell patient response choices to this specific question.
+Rule 1: Make options distinct (e.g. affirmative with specifics, negative/alternative, or polite delay).
+Rule 2: Keep them short and clear for large eye-control buttons.
+Rule 3: Output ONLY the 3 candidate replies, one per line, with no commentary or numbering."""
+
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config={
+                "temperature": 0.2,
+                "max_output_tokens": 120,
+            },
+        )
+
+        text = response.text or ""
+        lines = [line.strip().lstrip("-").lstrip("1234567890.").strip() for line in text.split("\n") if line.strip()]
+        valid_replies = [l for l in lines if len(l) > 1][:3]
+
+        if len(valid_replies) > 0:
+            return CaregiverReplyResponse(
+                replies=valid_replies,
+                source="gemini",
+            )
+        else:
+            return CaregiverReplyResponse(
+                replies=get_caregiver_fallback(req),
+                source="fallback",
+            )
+    except Exception as e:
+        logger.warning("Gemini caregiver reply call failed (%s). Using fallback.", str(e))
+        return CaregiverReplyResponse(
+            replies=get_caregiver_fallback(req),
+            source="fallback",
+        )
+

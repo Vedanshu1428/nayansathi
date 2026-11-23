@@ -13,6 +13,7 @@ import {
   Menu,
   X,
   Volume2,
+  Monitor,
 } from "lucide-react";
 
 interface NavbarProps {
@@ -230,6 +231,27 @@ export default function Navbar({
                 </>
               )}
             </div>
+
+            {/* OS Desktop Eye-Control Toggle Button */}
+            {gazeCtx && (
+              <button
+                type="button"
+                data-dwell="true"
+                onClick={() => gazeCtx?.setIsOSControlActive(!gazeCtx.isOSControlActive)}
+                className={`hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+                  gazeCtx.isOSControlActive
+                    ? "bg-indigo-600 text-white border-indigo-500 shadow-md animate-pulse"
+                    : isHighContrast
+                    ? "bg-slate-800 border-slate-700 text-slate-300 hover:text-white"
+                    : "bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700"
+                }`}
+                title="Toggle System-Wide Windows OS Desktop Eye Control"
+              >
+                <Monitor className="w-3.5 h-3.5" />
+                <span>OS Desktop Control</span>
+                <span className={`w-2 h-2 rounded-full ${gazeCtx.isOSControlActive ? "bg-emerald-400" : "bg-slate-400"}`} />
+              </button>
+            )}
 
             {/* Dark Theme / Night Mode Toggle Button */}
             {onToggleHighContrast && (

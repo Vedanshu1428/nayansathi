@@ -100,3 +100,19 @@ def test_predict_sentences_invalid_payload():
     """Validates that Pydantic rejects invalid non-object payload with 422."""
     response = client.post("/api/ai/predict-sentences", json="invalid string")
     assert response.status_code == 422
+
+
+def test_caregiver_reply_suggestions():
+    """Validates POST /api/ai/reply-suggestions returns 3 tailored replies."""
+    payload = {
+        "spoken_question": "Do you need any water or juice?",
+        "language": "en"
+    }
+    response = client.post("/api/ai/reply-suggestions", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert "replies" in data
+    assert isinstance(data["replies"], list)
+    assert len(data["replies"]) <= 3
+    assert len(data["replies"]) > 0
+    assert data["source"] in ["gemini", "fallback"]

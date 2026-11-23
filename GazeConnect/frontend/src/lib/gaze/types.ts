@@ -58,6 +58,10 @@ export interface EyeFeatures {
   isEyesClosed: boolean;
   /** How long eyes have been continuously closed (ms); 0 if open */
   closedDurationMs: number;
+  /** Real-time ocular fatigue estimation based on blink rate and eyelid droop */
+  fatigueLevel?: "fresh" | "mild" | "high";
+  blinksPerMinute?: number;
+  isTripleBlinkSOS?: boolean;
   headPose: HeadPoseProxy;
   featureVector: number[];   // [1, gazeX, gazeY, headPose.noseTipX, headPose.noseTipY]
 }

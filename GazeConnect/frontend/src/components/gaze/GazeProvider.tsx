@@ -47,6 +47,12 @@ interface GazeContextValue {
   setShowCameraPreview: (v: boolean) => void;
   showLandmarksDebug: boolean;
   setShowLandmarksDebug: (v: boolean) => void;
+  // System-wide OS Desktop Control Bridge
+  isOSControlActive: boolean;
+  setIsOSControlActive: (active: boolean) => void;
+  osClickType: "left" | "double" | "right";
+  setOSClickType: (type: "left" | "double" | "right") => void;
+  osStatusMessage: string;
 }
 
 const GazeContext = createContext<GazeContextValue | null>(null);
@@ -76,6 +82,15 @@ export default function GazeProvider({ children }: { children: React.ReactNode }
   const [cursorSpeedPresetIndex, setCursorSpeedPresetIndex] = useState(1); // Slow/Balanced default (minCutoff=1.0, beta=0.08)
   const [showCameraPreview, setShowCameraPreview] = useState(false); // Collapsed by default so it never blocks bottom-right keys
   const [showLandmarksDebug, setShowLandmarksDebug] = useState(false);
+
+  // System-wide OS Desktop Control Bridge states
+  const [isOSControlActive, setIsOSControlActive] = useState<boolean>(false);
+  const [osClickType, setOSClickType] = useState<"left" | "double" | "right">("left");
+  const [osStatusMessage, setOSStatusMessage] = useState<string>("Disconnected");
+
+  const osWebSocketRef = useRef<WebSocket | null>(null);
+  const lastOSMoveSentTime = useRef<number>(0);
+  const isBlinkClickFired = useRef<boolean>(false);
 
   const filterRef = useRef(
     new OneEuroFilter2D({ minCutoff: 1.0, beta: 0.08, dCutoff: 1.0 })
@@ -141,6 +156,53 @@ export default function GazeProvider({ children }: { children: React.ReactNode }
       blinkCooldownMs: 900,
     });
   }, [dwellDurationMs, selectionMode, blinkHoldMs]);
+
+  // Manage OS Desktop Control WebSocket Bridge
+  useEffect(() => {
+    if (!isOSControlActive) {
+      if (osWebSocketRef.current) {
+        osWebSocketRef.current.close();
+        osWebSocketRef.current = null;
+      }
+      setOSStatusMessage("Inactive");
+      return;
+    }
+
+    setOSStatusMessage("Connecting...");
+    const wsUrl = "ws://localhost:8000/ws/os-control";
+    const ws = new WebSocket(wsUrl);
+    osWebSocketRef.current = ws;
+
+    ws.onopen = () => {
+      setOSStatusMessage("Active (Streaming)");
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "override") {
+          setOSStatusMessage(msg.message || "Manual Mouse Override — Paused");
+        } else if (msg.type === "action_result") {
+          setOSStatusMessage(`Action: ${msg.action} (${msg.success ? "ok" : "fail"})`);
+        }
+      } catch (e) {
+        console.error("OS WS message error:", e);
+      }
+    };
+
+    ws.onerror = () => {
+      setOSStatusMessage("Connection Error");
+    };
+
+    ws.onclose = () => {
+      setOSStatusMessage("Disconnected");
+    };
+
+    return () => {
+      ws.close();
+      osWebSocketRef.current = null;
+    };
+  }, [isOSControlActive]);
 
   // Process eye features into gaze point & dwell
   const handleFeaturesUpdate = useCallback(
@@ -211,6 +273,47 @@ export default function GazeProvider({ children }: { children: React.ReactNode }
         })
       );
 
+      // ── System-Wide OS Desktop Control Stream (30 FPS cap) ──
+      if (
+        isOSControlActive &&
+        raw.isCalibrated &&
+        osWebSocketRef.current &&
+        osWebSocketRef.current.readyState === WebSocket.OPEN
+      ) {
+        const normX = Math.max(0.0, Math.min(1.0, finalX / screenW));
+        const normY = Math.max(0.0, Math.min(1.0, finalY / screenH));
+
+        if (features.timestamp - lastOSMoveSentTime.current >= 33) {
+          lastOSMoveSentTime.current = features.timestamp;
+          osWebSocketRef.current.send(
+            JSON.stringify({ action: "move", x: normX, y: normY })
+          );
+
+          // Top/Bottom Edge Scrolling (top 8% / bottom 8%)
+          if (normY < 0.08) {
+            osWebSocketRef.current.send(JSON.stringify({ action: "scroll", delta: 120 }));
+          } else if (normY > 0.92) {
+            osWebSocketRef.current.send(JSON.stringify({ action: "scroll", delta: -120 }));
+          }
+        }
+
+        // Fire OS click on intentional hold-blink completion
+        if (dwellState.blinkProgress >= 1.0 && !isBlinkClickFired.current) {
+          isBlinkClickFired.current = true;
+          const actionCmd =
+            osClickType === "double"
+              ? "double_click"
+              : osClickType === "right"
+              ? "right_click"
+              : "click";
+          osWebSocketRef.current.send(
+            JSON.stringify({ action: actionCmd, x: normX, y: normY })
+          );
+        } else if (dwellState.blinkProgress < 0.3) {
+          isBlinkClickFired.current = false;
+        }
+      }
+
       // 2. SLOW PATH (Throttled to 10 FPS / 100ms): Update React state for diagnostic meters, badges, and dev panels
       const now = performance.now();
       if (now - lastStateUpdateRef.current >= 100) {
@@ -232,7 +335,7 @@ export default function GazeProvider({ children }: { children: React.ReactNode }
         });
       }
     },
-    [interactionMode, calibrationModel]
+    [interactionMode, calibrationModel, isOSControlActive, osClickType]
   );
 
   const handleStatusChange = useCallback((s: TrackingStatus) => {
@@ -272,6 +375,11 @@ export default function GazeProvider({ children }: { children: React.ReactNode }
         setShowCameraPreview,
         showLandmarksDebug,
         setShowLandmarksDebug,
+        isOSControlActive,
+        setIsOSControlActive,
+        osClickType,
+        setOSClickType,
+        osStatusMessage,
       }}
     >
       {/* Persistent global webcam tracker — positioned safely at top-right or hidden when collapsed so it NEVER covers bottom-right keyboard keys (ENTER/M/BKSP) */}

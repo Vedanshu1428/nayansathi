@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import { useGaze } from "@/components/gaze/GazeProvider";
 import { GazePoint, TrackingStatus, SelectionMode, CURSOR_SPEED_PRESETS } from "@/lib/gaze/types";
-import { Sliders, FlipHorizontal, AlertCircle } from "lucide-react";
+import { Sliders, FlipHorizontal, AlertCircle, Monitor, MousePointer, Pause } from "lucide-react";
 
 interface GazeCursorProps {
   gazePoint: GazePoint | null;
@@ -49,6 +50,14 @@ export default function GazeCursor({
   cursorSpeedPresetIndex,
   onCursorSpeedPresetChange,
 }: GazeCursorProps) {
+  let gazeCtx: ReturnType<typeof useGaze> | null = null;
+  try {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    gazeCtx = useGaze();
+  } catch {
+    gazeCtx = null;
+  }
+
   const [showTuning, setShowTuning] = useState(false);
 
   // Direct DOM references for 60 FPS zero-lag rendering without triggering React re-renders
@@ -268,6 +277,51 @@ export default function GazeCursor({
 
       {/* Compact Floating Tuning Pill — Interactive with pointer-events-auto */}
       <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-2 pointer-events-auto">
+        {/* Floating OS Desktop Control Status & Quick Click Selector */}
+        {gazeCtx?.isOSControlActive && (
+          <div className="p-3 rounded-2xl bg-slate-900/95 text-white border border-indigo-500 shadow-2xl backdrop-blur-md text-xs space-y-2 w-72 animate-in fade-in slide-in-from-bottom-2">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
+              <span className="font-bold flex items-center gap-1.5 text-indigo-300">
+                <Monitor className="w-3.5 h-3.5 text-indigo-400" />
+                <span>OS Desktop Control</span>
+              </span>
+              <button
+                type="button"
+                data-dwell="true"
+                onClick={() => gazeCtx?.setIsOSControlActive(false)}
+                className="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-700 text-white font-bold text-[10px] flex items-center gap-1"
+                title="Pause OS desktop cursor stream"
+              >
+                <Pause className="w-3 h-3" />
+                <span>Pause</span>
+              </button>
+            </div>
+
+            <div className="text-[10px] text-slate-300 font-mono truncate">
+              Status: <span className="text-emerald-400">{gazeCtx.osStatusMessage}</span>
+            </div>
+
+            {/* Quick Click-Type Selector */}
+            <div className="flex gap-1.5 pt-1">
+              {(["left", "double", "right"] as const).map((type) => (
+                <button
+                  key={type}
+                  type="button"
+                  data-dwell="true"
+                  onClick={() => gazeCtx?.setOSClickType(type)}
+                  className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold border transition-all ${
+                    gazeCtx?.osClickType === type
+                      ? "bg-indigo-600 text-white border-indigo-400 shadow-sm"
+                      : "bg-slate-800 text-slate-400 border-slate-700 hover:text-white"
+                  }`}
+                >
+                  {type === "left" ? "Left Click" : type === "double" ? "Double" : "Right Click"}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {showTuning && (
           <div className="p-4 rounded-2xl bg-white/95 backdrop-blur-md border border-slate-200 shadow-xl w-72 text-xs space-y-4">
             {/* Header */}
